@@ -5,6 +5,7 @@
   const LOCAL_CONFIG_KEY = "rtbaliFirebaseConfig";
   const DEFAULT_API_BASE = "https://asia-southeast2-rtbali.cloudfunctions.net/api";
   const DEFAULT_TRIP_ID = "rtbali";
+  const AUTO_MERGE_INTERVAL_MS = 60000;
 
   function ready(fn) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn);
@@ -144,6 +145,16 @@
     status(`Merged ${(payload.expenses || []).length} cloud expenses`);
   }
 
+  async function autoMergeExpenses(config) {
+    try {
+      const payload = await request(config, `/expenses?tripId=${encodeURIComponent(config.tripId)}`);
+      window.RTBALI.mergeExpenses(payload.expenses || [], "Synced Telegram expenses");
+      status(`Auto-synced ${(payload.expenses || []).length} cloud expenses`);
+    } catch (err) {
+      status(`Cloud sync failed: ${err.message}`);
+    }
+  }
+
   function readFileAsDataUrl(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -204,6 +215,9 @@
         prompt("Copy setup link", link);
       }
     }));
+
+    autoMergeExpenses(config);
+    setInterval(() => autoMergeExpenses(config), AUTO_MERGE_INTERVAL_MS);
   }
 
   function installSetupOnly() {

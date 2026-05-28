@@ -101,6 +101,10 @@ After one device is configured, use **Copy setup link** and send that link to yo
 other devices. Opening the link saves the cloud config once, then the app removes
 the secret from the address bar. Treat that link like a password.
 
+When cloud setup exists, the dashboard automatically merges Telegram/Firebase
+expenses on load and refreshes them about once per minute. Use **Merge expenses**
+for an immediate manual refresh.
+
 ### Telegram commands
 
 In your Telegram group:
