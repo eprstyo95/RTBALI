@@ -84,6 +84,8 @@ a:hover{text-decoration:underline}
 .btn:active{transform:translateY(0)}
 .btn.primary{background:var(--teal);border-color:var(--teal);color:#fff;box-shadow:0 10px 22px -12px var(--teal)}
 .btn.primary:hover{background:var(--teal-d);border-color:var(--teal-d)}
+.btn.quick-expense{background:var(--clay);border-color:var(--clay);color:#fff;box-shadow:0 10px 22px -12px var(--clay)}
+.btn.quick-expense:hover{background:var(--clay-d);border-color:var(--clay-d)}
 .btn.ghost{background:transparent;box-shadow:none;border-color:var(--line2)}
 .btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--line2))}
 .btn.tiny{padding:5px 9px;font-size:12px;border-radius:9px;box-shadow:none}
@@ -194,6 +196,12 @@ select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns=
 .settle .verdict.pay{background:var(--clay-soft);border-color:color-mix(in srgb,var(--clay) 30%,transparent);color:var(--clay-d)}
 .settle .verdict .ic{width:20px;height:20px;flex:none}
 .settle .note{color:var(--muted);font-size:12px;margin-top:8px}
+.quick-ledger{display:grid;gap:11px}
+.quick-ledger .total{font-family:Georgia,"Times New Roman",serif;font-size:30px;font-weight:800;line-height:1;color:var(--ink)}
+.quick-ledger .sub{color:var(--muted);font-size:12.5px}
+.quick-ledger .last{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:11px 12px;display:flex;justify-content:space-between;gap:12px;align-items:center}
+.quick-ledger .last strong{display:block;font-size:13px}
+.quick-ledger .last span{color:var(--muted);font-size:12px}
 
 /* next actions */
 .next-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
@@ -395,6 +403,7 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
     <div class="top-actions">
       <span class="sync-pill" id="syncState"><span class="led"></span> Seed loaded</span>
       <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"></button>
+      <button class="btn quick-expense" data-act="add" data-type="expense">Add expense</button>
       <button class="btn ghost" id="printBtn">Print</button>
       <button class="btn ghost" id="exportBtn">Export</button>
       <label class="btn ghost file-btn">Import<input id="importInput" type="file" accept="application/json"></label>
@@ -813,6 +822,10 @@ function renderDashboard(){
       </div>
     </div>
     <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("plus")} Quick expense input</h2><span class="meta">opens ledger popup</span></div>
+      ${quickExpenseHtml(t)}
+    </div>
+    <div class="panel">
       <div class="sec-head"><h2 class="serif">${icon("bolt")} Next actions</h2><span class="meta">what needs attention now</span></div>
       ${nextActionsHtml()}
     </div>
@@ -830,6 +843,30 @@ function renderDashboard(){
         ${dailyPlanHtml()}
       </div>
     </div>`;
+}
+
+function quickExpenseHtml(t){
+  const last = db.expenses
+    .filter(e=>num(e.amount)>0 || e.description || e.vendor || e.place)
+    .slice()
+    .sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))
+    [0];
+  const lastHtml = last ? `<div class="last">
+      <div><strong>${escapeHtml(last.description || last.vendor || last.place || "Expense")}</strong>
+        <span>${dateText(last.date)} · ${escapeHtml(last.category || "Other")} · ${escapeHtml(last.payer || "TBD")}</span></div>
+      <strong>${fmt.format(num(last.amount))}</strong>
+    </div>` : `<div class="last"><div><strong>No logged expense yet</strong><span>Start with fuel, toll, ferry, hotel, or food.</span></div></div>`;
+  return `<div class="quick-ledger">
+    <div>
+      <div class="total">${fmt.format(t.actual)}</div>
+      <div class="sub">${db.expenses.length} ledger rows · ${t.transferLabel}${t.transferSub && t.transferSub !== "no amounts logged yet" ? " · " + t.transferSub : ""}</div>
+    </div>
+    ${lastHtml}
+    <div class="top-actions" style="justify-content:flex-start">
+      <button class="btn quick-expense" data-act="add" data-type="expense">${icon("plus")} Add expense</button>
+      <button class="btn ghost" data-act="goto" data-tab="expenses">${icon("wallet")} Open ledger</button>
+    </div>
+  </div>`;
 }
 
 function dailyPlanHtml(){
@@ -1361,13 +1398,26 @@ function renderData(){
    ============================================================ */
 function openEditor(type, id=""){
   const schema = schemas[type]; if(!schema) return;
-  const record = id ? (db[schema.collection].find(x=>x.id===id) || {}) : {};
+  const record = id ? (db[schema.collection].find(x=>x.id===id) || {}) : defaultRecord(type);
   activeEdit = { type, id, schema };
   $("modalEb").textContent = id ? "Edit" : "Add";
   $("modalTitle").textContent = schema.title;
   $("modalFields").innerHTML = fieldHtml(schema.fields, record);
   $("deleteBtn").style.display = id ? "" : "none";
   $("dialog").showModal();
+}
+function defaultRecord(type){
+  if(type==="expense"){
+    return {
+      date: new Date().toISOString().slice(0,10),
+      category: db.lists.categories?.find(c=>c==="Food & Drinks") || db.lists.categories?.[0] || "Other",
+      payer: "TBD",
+      payment: "Cash",
+      amount: 0,
+      split: "Shared by Units"
+    };
+  }
+  return {};
 }
 function fieldHtml(fields, rec={}){
   return fields.map(([key,label,type="text"])=>{
