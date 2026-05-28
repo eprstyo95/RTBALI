@@ -110,6 +110,64 @@ async function sendTelegram(chatId, text, extra = {}) {
   return response;
 }
 
+async function answerCallbackQuery(callbackQueryId, text = "") {
+  if (!TELEGRAM_TOKEN || !callbackQueryId) return null;
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      callback_query_id: callbackQueryId,
+      text
+    })
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    logger.error("Telegram answerCallbackQuery failed", body);
+  }
+  return response;
+}
+
+function helpText() {
+  return [
+    "<b>RTBALI expense bot</b>",
+    "Use /menu for buttons.",
+    "",
+    "<b>Manual expense</b>",
+    "<code>/expense meal 220000 paid TJ split 50/50</code>",
+    "<code>/meal 220000 paid EK split order</code>",
+    "",
+    "<b>Receipt OCR</b>",
+    "Send a receipt photo, then confirm the draft.",
+    "",
+    "<b>Member setup</b>",
+    "<code>/link CODE TJ|EK|P3|P4</code>",
+    "<code>/unlink</code>",
+    "",
+    "<b>Useful</b>",
+    "/saldo",
+    "/who"
+  ].join("\n");
+}
+
+function menuKeyboard() {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Saldo", callback_data: "menu:saldo" },
+        { text: "Who", callback_data: "menu:who" }
+      ],
+      [
+        { text: "How to add expense", callback_data: "menu:expense" },
+        { text: "Receipt OCR", callback_data: "menu:ocr" }
+      ],
+      [
+        { text: "Help", callback_data: "menu:help" },
+        { text: "Unlink me", callback_data: "menu:unlink" }
+      ]
+    ]
+  };
+}
+
 async function getMemberByTelegram(tripId, user) {
   if (!user?.id) return null;
   const snap = await tripRef(tripId).collection("members").doc(String(user.id)).get();
@@ -133,6 +191,17 @@ async function linkMember(tripId, user, chatId, memberName) {
     updatedAt: nowField(),
     createdAt: nowField()
   }, { merge: true });
+  return data;
+}
+
+async function unlinkMember(tripId, user) {
+  if (!user?.id) return null;
+  const ref = tripRef(tripId).collection("members").doc(String(user.id));
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data();
+  await ref.delete();
+  await tripRef(tripId).set({ updatedAt: nowField() }, { merge: true });
   return data;
 }
 
@@ -371,19 +440,15 @@ async function handleCommand(tripId, message) {
   const user = message.from || {};
   const member = await getMemberByTelegram(tripId, user);
   const [commandRaw, ...args] = text.split(/\s+/);
-  const command = commandRaw.toLowerCase();
+  const command = commandRaw.toLowerCase().replace(/@[\w_]+$/, "");
 
   if (command === "/start" || command === "/help") {
-    return [
-      "<b>RTBALI expense bot</b>",
-      "/link CODE TJ|EK|P3|P4",
-      "/expense meal 220000 paid TJ split 50/50",
-      "/meal 220000 paid EK split order",
-      "Send a receipt photo for OCR draft.",
-      "/confirm EXPENSE_ID",
-      "/saldo",
-      "/who"
-    ].join("\n");
+    return helpText();
+  }
+
+  if (command === "/menu") {
+    await sendTelegram(chatId, "<b>RTBALI menu</b>", { reply_markup: menuKeyboard() });
+    return "";
   }
 
   if (command === "/link") {
@@ -391,6 +456,12 @@ async function handleCommand(tripId, message) {
     if (!LINK_CODE || code !== LINK_CODE) return "Wrong or missing link code.";
     const linked = await linkMember(tripId, user, chatId, name);
     return `Linked ${linked.displayName} as <b>${linked.member}</b>.`;
+  }
+
+  if (command === "/unlink") {
+    const unlinked = await unlinkMember(tripId, user);
+    if (!unlinked) return "You are not linked yet.";
+    return `Unlinked <b>${unlinked.member}</b> for ${unlinked.displayName || unlinked.telegramUsername || user.id}.`;
   }
 
   if (command === "/who") {
@@ -434,6 +505,67 @@ async function handleCommand(tripId, message) {
   return "I did not understand that yet. Use /help.";
 }
 
+async function handleCallback(tripId, callbackQuery) {
+  const data = callbackQuery.data || "";
+  const message = callbackQuery.message || {};
+  const chatId = message.chat?.id;
+  const user = callbackQuery.from || {};
+  if (!chatId) return;
+  if (ALLOWED_CHAT_ID && String(chatId) !== String(ALLOWED_CHAT_ID)) {
+    await answerCallbackQuery(callbackQuery.id, "This bot is locked to a different group.");
+    return;
+  }
+
+  await answerCallbackQuery(callbackQuery.id, "OK");
+
+  if (data === "menu:help") {
+    await sendTelegram(chatId, helpText(), { reply_markup: menuKeyboard() });
+    return;
+  }
+  if (data === "menu:saldo") {
+    await sendTelegram(chatId, settlementText(await settlement(tripId)), { reply_markup: menuKeyboard() });
+    return;
+  }
+  if (data === "menu:who") {
+    const snap = await tripRef(tripId).collection("members").get();
+    const text = snap.empty
+      ? "No members linked yet."
+      : snap.docs.map((doc) => {
+        const member = doc.data();
+        return `${member.member}: ${member.displayName || member.telegramUsername || doc.id}`;
+      }).join("\n");
+    await sendTelegram(chatId, text, { reply_markup: menuKeyboard() });
+    return;
+  }
+  if (data === "menu:expense") {
+    await sendTelegram(chatId, [
+      "<b>Add expense examples</b>",
+      "<code>/expense meal 220000 paid TJ split 50/50</code>",
+      "<code>/meal 220000 paid EK split order</code>",
+      "<code>/expense fuel 500000 paid EK split equal</code>",
+      "",
+      "Replace TJ/EK with your linked member code."
+    ].join("\n"), { reply_markup: menuKeyboard() });
+    return;
+  }
+  if (data === "menu:ocr") {
+    await sendTelegram(chatId, [
+      "<b>Receipt OCR</b>",
+      "Send a receipt photo to this group.",
+      "The bot creates a draft expense.",
+      "Then confirm it with:",
+      "<code>/confirm EXPENSE_ID</code>"
+    ].join("\n"), { reply_markup: menuKeyboard() });
+    return;
+  }
+  if (data === "menu:unlink") {
+    const unlinked = await unlinkMember(tripId, user);
+    await sendTelegram(chatId, unlinked
+      ? `Unlinked <b>${unlinked.member}</b> for ${unlinked.displayName || unlinked.telegramUsername || user.id}.`
+      : "You are not linked yet.", { reply_markup: menuKeyboard() });
+  }
+}
+
 exports.telegramWebhook = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory: "512MiB" }, async (req, res) => {
   try {
     if (req.method !== "POST") return res.status(405).send("Method not allowed");
@@ -441,6 +573,10 @@ exports.telegramWebhook = onRequest({ region: "asia-southeast2", timeoutSeconds:
       return res.status(401).send("Bad webhook secret");
     }
     const update = req.body || {};
+    if (update.callback_query) {
+      await handleCallback(TRIP_ID, update.callback_query);
+      return res.json({ ok: true });
+    }
     const message = update.message || update.edited_message;
     if (!message?.chat?.id) return res.json({ ok: true });
     const text = await handleCommand(TRIP_ID, message);

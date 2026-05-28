@@ -106,15 +106,20 @@ the secret from the address bar. Treat that link like a password.
 In your Telegram group:
 
 ```text
+/menu
 /link YOUR_CODE TJ
 /link YOUR_CODE EK
 /link YOUR_CODE P3
 /link YOUR_CODE P4
+/unlink
 /expense meal 220000 paid TJ split 50/50
 /meal 220000 paid EK split order
 /saldo
 /who
 ```
+
+`/menu` opens Telegram buttons for saldo, linked members, examples, OCR help,
+and unlinking yourself from the trip.
 
 Send a receipt photo to create an OCR draft. Confirm it with:
 
