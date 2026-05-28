@@ -2,6 +2,9 @@
   "use strict";
 
   const DEFAULT_CONFIG_PATH = "firebase-config.json";
+  const LOCAL_CONFIG_KEY = "rtbaliFirebaseConfig";
+  const DEFAULT_API_BASE = "https://asia-southeast2-rtbali.cloudfunctions.net/api";
+  const DEFAULT_TRIP_ID = "rtbali";
 
   function ready(fn) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn);
@@ -9,6 +12,8 @@
   }
 
   async function loadConfig() {
+    const local = loadLocalConfig();
+    if (local) return local;
     try {
       const response = await fetch(DEFAULT_CONFIG_PATH, { cache: "no-store" });
       if (!response.ok) return null;
@@ -23,6 +28,38 @@
     } catch (_) {
       return null;
     }
+  }
+
+  function normalizeConfig(config) {
+    if (!config || !config.apiBase || !config.syncKey) return null;
+    return {
+      tripId: DEFAULT_TRIP_ID,
+      ...config,
+      apiBase: String(config.apiBase).replace(/\/$/, ""),
+      syncKey: String(config.syncKey).trim()
+    };
+  }
+
+  function loadLocalConfig() {
+    try {
+      return normalizeConfig(JSON.parse(localStorage.getItem(LOCAL_CONFIG_KEY) || "null"));
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function saveLocalConfig(config) {
+    localStorage.setItem(LOCAL_CONFIG_KEY, JSON.stringify(config));
+  }
+
+  function promptConfig(existing = {}) {
+    const apiBase = prompt("Firebase API URL", existing.apiBase || DEFAULT_API_BASE);
+    if (!apiBase) return null;
+    const tripId = prompt("Trip ID", existing.tripId || DEFAULT_TRIP_ID);
+    if (!tripId) return null;
+    const syncKey = prompt("Firebase sync key");
+    if (!syncKey) return null;
+    return normalizeConfig({ apiBase, tripId, syncKey });
   }
 
   function button(label, className, onClick) {
@@ -124,12 +161,39 @@
     topActions.appendChild(file);
     topActions.appendChild(button("OCR receipt", "btn ghost", () => file.click()));
     topActions.appendChild(button("Push cloud", "btn ghost", () => pushDb(config).catch((err) => status(err.message))));
+    topActions.appendChild(button("Cloud setup", "btn ghost", () => {
+      const next = promptConfig(config);
+      if (!next) return;
+      saveLocalConfig(next);
+      window.location.reload();
+    }));
+  }
+
+  function installSetupOnly() {
+    const topActions = document.querySelector("header .top-actions");
+    if (!topActions) return;
+
+    const wrap = document.createElement("span");
+    wrap.className = "sync-pill";
+    wrap.id = "firebaseSyncState";
+    wrap.textContent = "Cloud not set";
+    topActions.insertBefore(wrap, topActions.firstChild);
+
+    topActions.appendChild(button("Cloud setup", "btn ghost", () => {
+      const config = promptConfig();
+      if (!config) return;
+      saveLocalConfig(config);
+      window.location.reload();
+    }));
   }
 
   ready(async () => {
     if (!window.RTBALI) return;
     const config = await loadConfig();
-    if (!config) return;
+    if (!config) {
+      installSetupOnly();
+      return;
+    }
     installControls(config);
   });
 })();

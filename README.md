@@ -78,13 +78,24 @@ curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
 
 ### Web sync setup
 
-Copy `firebase-config.example.json` to `firebase-config.json` and set:
+For local private use, copy `firebase-config.example.json` to
+`firebase-config.json` and set:
 
 - `apiBase`: your deployed `api` Cloud Function URL.
 - `tripId`: normally `rtbali`.
 - `syncKey`: same value as `RTBALI_SYNC_KEY`.
 
 `firebase-config.json` is ignored by git so the shared sync key is not committed.
+
+For GitHub Pages, do not commit `firebase-config.json`. Open the live app and use
+**Cloud setup**. Paste:
+
+- API URL: `https://asia-southeast2-rtbali.cloudfunctions.net/api`
+- Trip ID: `rtbali`
+- Sync key: the same value as `RTBALI_SYNC_KEY`
+
+The app saves those values only in that browser's localStorage, so GitHub can host
+the app without exposing the sync key in the repository.
 
 ### Telegram commands
 
