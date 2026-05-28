@@ -20,17 +20,17 @@ seed database and still works offline.
 
 ## What's new vs the old app
 
-- **Fixed data bugs**: the Lovina restaurant list was mangled on Excel import
-  (header row eaten as keys) and never shown — it's now cleaned and surfaced in a
-  **Dining** tab. A checklist task had a raw Excel serial date (`46187`) — now
-  correctly **14 Jun 2026**. Sources are now visible too.
+- **Fixed data bugs**: a checklist task had a raw Excel serial date (`46187`) —
+  now correctly **14 Jun 2026**. Sources are now visible too.
 - **Real numbers on the dashboard**: KPIs now read the detailed **Cost Plan**
   (≈ Rp 5.35 M with buffer, 2,432 km, ~270 L diesel) instead of the empty budget
   table, so the dashboard is useful *before* you spend anything.
 - **Smart settlement engine**: honors each expense's split type (Shared by Units
   2.5/2.5, Equal 50/50, TJ-only, EK-only) and TBD payers, instead of a naive 50/50.
-- **Route map**: a schematic Java→Bali map with status-coloured overnight stops and
+- **Route map**: a GeoJSON-backed Java→Bali map with status-coloured overnight stops and
   ferry crossings, plus a per-leg distance breakdown.
+- **Fuel Log**: fill-up KPIs, sortable odometer/liter/cost table, automatic
+  liters × price total, plan variance, and km/L efficiency from odometer deltas.
 - **Trip countdown**, per-day planned-cost chart, progress rings, grouped checklist
   with one-tap status cycling, sortable tables, dark mode, search & filters,
   validated import/export, and a print layout.
