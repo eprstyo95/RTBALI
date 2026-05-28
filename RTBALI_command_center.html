@@ -202,6 +202,8 @@ select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns=
 .quick-ledger .last{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:11px 12px;display:flex;justify-content:space-between;gap:12px;align-items:center}
 .quick-ledger .last strong{display:block;font-size:13px}
 .quick-ledger .last span{color:var(--muted);font-size:12px}
+.split-note{grid-column:1/-1;background:var(--info-soft);border:1px solid color-mix(in srgb,var(--info) 25%,transparent);color:var(--info);border-radius:var(--r-sm);padding:10px 12px;font-size:12.5px;line-height:1.4;text-transform:none;letter-spacing:0;font-weight:600}
+.bill-sub{color:var(--muted);font-size:11.5px;margin-top:3px}
 
 /* next actions */
 .next-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
@@ -540,7 +542,9 @@ const schemas = {
   ]},
   accommodation: { title: "Accommodation", collection: "accommodations", fields: [
     ["date","Date","date"],["night","Night label"],["area","Area"],["property","Property"],["address","Address","textarea"],
-    ["roomsGuests","Rooms / guests"],["checkInOut","Check-in / out"],["status","Status","select:statuses"],["contact","Contact"],["note","Note","textarea"]
+    ["roomsGuests","Rooms / guests"],["checkInOut","Check-in / out note"],["checkInDate","Check-in date","date"],["checkInFrom","Check-in from","time"],
+    ["checkInUntil","Check-in until","time"],["checkOutDate","Check-out date","date"],["checkOutTime","Check-out time","time"],
+    ["status","Status","select:statuses"],["contact","Contact"],["note","Note","textarea"]
   ]},
   checklist: { title: "Checklist Task", collection: "checklist", fields: [
     ["task","Task","textarea"],["category","Category"],["owner","Owner"],["due","Due","date"],
@@ -549,7 +553,10 @@ const schemas = {
   expense: { title: "Expense", collection: "expenses", fields: [
     ["date","Date","date"],["place","Route / place"],["category","Category","select:categories"],["description","Description"],
     ["vendor","Vendor"],["payer","Payer","select:payers"],["payment","Payment","select:payments"],["amount","Amount (IDR)","number"],
-    ["split","Split","select:splits"],["notes","Notes","textarea"]
+    ["split","Split","select:splits"],["billSplitMode","Meal / custom bill splitter","select:billSplitModes"],["billIncludesTaxService","Include tax/service in split","select:yesno"],
+    ["foodTJAmount","TJ ordered food","number"],["foodEKAmount","EK ordered food","number"],["foodSharedAmount","Shared food","number"],
+    ["taxServiceAmount","Tax + service fee","number"],["customTJAmount","Custom TJ share","number"],["customEKAmount","Custom EK share","number"],
+    ["notes","Notes","textarea"]
   ]},
   categoryDetail: { title: "Cost Plan Row", collection: "categoryDetails", fields: [
     ["category","Category","select:detailCategories"],["date","Date","date"],["location","Segment / location"],
@@ -617,13 +624,20 @@ function normalize(d) {
   d.lists.payers = arr(d.lists.payers, ["TJ","EK","TBD"]);
   d.lists.payments = arr(d.lists.payments, ["Cash","Debit/Credit","QRIS","Transfer","e-Money","Online"]);
   d.lists.splits = arr(d.lists.splits, ["Shared by Units","Equal 50/50","TJ only","EK only","Custom"]);
+  d.lists.billSplitModes = arr(d.lists.billSplitModes, ["Off","Meal/order split","Custom TJ/EK"]);
   ["tripPlans","accommodations","checklist","expenses","budget","categoryDetails","restaurants","sources"].forEach(k => { d[k] = Array.isArray(d[k]) ? d[k] : []; });
   d.categorySettings = d.categorySettings || {};
   // assign ids + coerce types defensively
   d.tripPlans.forEach((r,i)=>{ r.id = r.id || `trip-${i}`; });
   d.accommodations.forEach((r,i)=>{ r.id = r.id || `stay-${i}`; });
   d.checklist.forEach((r,i)=>{ r.id = r.id || `task-${i}`; r.category = r.category || "General"; r.status = r.status || "Not started"; r.due = fixDate(r.due); });
-  d.expenses.forEach((r,i)=>{ r.id = r.id || `exp-${i}`; r.amount = num(r.amount); r.date = fixDate(r.date); });
+  d.accommodations.forEach((r)=>{ r.checkInDate = fixDate(r.checkInDate); r.checkOutDate = fixDate(r.checkOutDate); });
+  d.expenses.forEach((r,i)=>{
+    r.id = r.id || `exp-${i}`; r.amount = num(r.amount); r.date = fixDate(r.date);
+    ["foodTJAmount","foodEKAmount","foodSharedAmount","taxServiceAmount","customTJAmount","customEKAmount"].forEach(k=>{ r[k]=num(r[k]); });
+    r.billSplitMode = r.billSplitMode || "Off";
+    r.billIncludesTaxService = r.billIncludesTaxService || "Yes";
+  });
   d.categoryDetails.forEach((r,i)=>{ r.id = r.id || `det-${i}`; ["km","liters","unitPrice","baseAmount"].forEach(k=>{ if(r[k]!==undefined && r[k]!=="") r[k]=num(r[k]); }); r.date = fixDate(r.date); });
   return d;
 }
@@ -854,7 +868,7 @@ function quickExpenseHtml(t){
   const lastHtml = last ? `<div class="last">
       <div><strong>${escapeHtml(last.description || last.vendor || last.place || "Expense")}</strong>
         <span>${dateText(last.date)} · ${escapeHtml(last.category || "Other")} · ${escapeHtml(last.payer || "TBD")}</span></div>
-      <strong>${fmt.format(num(last.amount))}</strong>
+      <strong>${fmt.format(expenseTotal(last))}</strong>
     </div>` : `<div class="last"><div><strong>No logged expense yet</strong><span>Start with fuel, toll, ferry, hotel, or food.</span></div></div>`;
   return `<div class="quick-ledger">
     <div>
@@ -922,20 +936,14 @@ function totals(){
   let actual=0, tjPaid=0, ekPaid=0, tjOwes=0, ekOwes=0, pending=0;
   const byCategory={};
   db.expenses.forEach(e=>{
-    const a = num(e.amount); if(!a) return;
+    const a = expenseTotal(e); if(!a) return;
     actual += a;
     byCategory[e.category||"Other"] = (byCategory[e.category||"Other"]||0)+a;
     // who paid
     if (e.payer==="TJ") tjPaid+=a; else if (e.payer==="EK") ekPaid+=a; else { pending+=a; }
     // who owes (split)
-    let tjShare=0.5, ekShare=0.5;
-    switch(e.split){
-      case "TJ only": tjShare=1; ekShare=0; break;
-      case "EK only": tjShare=0; ekShare=1; break;
-      case "Equal 50/50": tjShare=0.5; ekShare=0.5; break;
-      case "Shared by Units": default: tjShare=tjU/totU; ekShare=ekU/totU; break;
-    }
-    tjOwes += a*tjShare; ekOwes += a*ekShare;
+    const shares = expenseShares(e, tjU, ekU);
+    tjOwes += shares.tj; ekOwes += shares.ek;
   });
   const tjNet = tjPaid - tjOwes;   // >0 means TJ overpaid
   let transferLabel, transferSub;
@@ -944,6 +952,47 @@ function totals(){
   else if (tjNet > 0){ transferLabel="EK → TJ"; transferSub=fmt.format(Math.round(tjNet)); }
   else { transferLabel="TJ → EK"; transferSub=fmt.format(Math.round(Math.abs(tjNet))); }
   return { actual, tjPaid, ekPaid, tjOwes, ekOwes, tjNet, pending, byCategory, transferLabel, transferSub, tjU, ekU };
+}
+function isBillSplit(e){
+  return e.billSplitMode && e.billSplitMode !== "Off";
+}
+function expenseTotal(e){
+  if(!isBillSplit(e)) return num(e.amount);
+  if(e.billSplitMode === "Custom TJ/EK"){
+    const custom = num(e.customTJAmount) + num(e.customEKAmount);
+    return custom || num(e.amount);
+  }
+  const food = num(e.foodTJAmount) + num(e.foodEKAmount) + num(e.foodSharedAmount);
+  const taxes = e.billIncludesTaxService === "No" ? 0 : num(e.taxServiceAmount);
+  return food + taxes || num(e.amount);
+}
+function expenseShares(e, tjUArg, ekUArg){
+  const tjU = tjUArg || num(db.settings.tjSplitUnits) || 1;
+  const ekU = ekUArg || num(db.settings.ekSplitUnits) || 1;
+  const totU = tjU + ekU;
+  const a = expenseTotal(e);
+  if(!a) return { tj:0, ek:0 };
+  if(e.billSplitMode === "Custom TJ/EK"){
+    const tj = num(e.customTJAmount), ek = num(e.customEKAmount);
+    if(tj || ek) return { tj, ek };
+  }
+  if(e.billSplitMode === "Meal/order split"){
+    const tjFood = num(e.foodTJAmount), ekFood = num(e.foodEKAmount), shared = num(e.foodSharedAmount);
+    const baseTJ = tjFood + shared * (tjU / totU);
+    const baseEK = ekFood + shared * (ekU / totU);
+    const base = baseTJ + baseEK;
+    const tax = e.billIncludesTaxService === "No" ? 0 : num(e.taxServiceAmount);
+    const tjTax = base ? tax * (baseTJ / base) : tax * (tjU / totU);
+    return { tj: baseTJ + tjTax, ek: baseEK + (tax - tjTax) };
+  }
+  let tjShare=0.5, ekShare=0.5;
+  switch(e.split){
+    case "TJ only": tjShare=1; ekShare=0; break;
+    case "EK only": tjShare=0; ekShare=1; break;
+    case "Equal 50/50": tjShare=0.5; ekShare=0.5; break;
+    case "Shared by Units": default: tjShare=tjU/totU; ekShare=ekU/totU; break;
+  }
+  return { tj:a*tjShare, ek:a*ekShare };
 }
 function settlementHtml(t){
   if (t.actual===0){
@@ -1160,6 +1209,7 @@ function renderStays(){
 }
 function stayCard(r){
   const [dd,mm] = splitDate(r.date);
+  const timeLine = stayTimeLine(r);
   return `<article class="item">
     <div class="date"><div class="d serif">${dd}</div><div class="m">${mm}</div>${r.night?`<div class="dow">${escapeHtml(r.night)}</div>`:""}</div>
     <div class="body">
@@ -1167,7 +1217,8 @@ function stayCard(r){
       <div class="route">${escapeHtml(r.area||"")}${r.roomsGuests?" · "+escapeHtml(r.roomsGuests):""}</div>
       ${r.address?`<p>${escapeHtml(r.address)}</p>`:""}
       <div class="tags">
-        ${r.checkInOut?`<span class="chip">${icon("clock")} ${escapeHtml(r.checkInOut)}</span>`:""}
+        ${timeLine?`<span class="chip">${icon("clock")} ${escapeHtml(timeLine)}</span>`:""}
+        ${r.checkInOut?`<span class="chip">${icon("list")} ${escapeHtml(r.checkInOut)}</span>`:""}
         ${r.contact?`<span class="chip">${icon("phone")} ${escapeHtml(r.contact)}</span>`:""}
       </div>
       ${r.note?`<p style="margin-top:8px"><em>${escapeHtml(r.note)}</em></p>`:""}
@@ -1177,6 +1228,18 @@ function stayCard(r){
       <button class="btn tiny" data-act="edit" data-type="accommodation" data-id="${r.id}">Edit</button>
     </div>
   </article>`;
+}
+function stayTimeLine(r){
+  const ci = [r.checkInDate ? dateText(r.checkInDate) : "", timeRange(r.checkInFrom, r.checkInUntil)].filter(Boolean).join(" ");
+  const co = [r.checkOutDate ? dateText(r.checkOutDate) : "", r.checkOutTime || ""].filter(Boolean).join(" ");
+  if(ci && co) return `In ${ci} · Out ${co}`;
+  if(ci) return `Check-in ${ci}`;
+  if(co) return `Check-out ${co}`;
+  return "";
+}
+function timeRange(from, until){
+  if(from && until) return `${from}-${until}`;
+  return from || until || "";
 }
 
 /* ============================================================
@@ -1225,10 +1288,10 @@ function renderExpenses(){
   const body = rows.length ? rows.map(e=>`<tr>
     <td>${dateText(e.date)}</td>
     <td><span class="chip" style="background:transparent;border-color:${COLORMAP[e.category]||"var(--line)"}">${escapeHtml(e.category||"—")}</span></td>
-    <td><div class="lead2">${escapeHtml(e.description||"—")}</div><div class="sub">${escapeHtml(e.place||e.vendor||"")}</div></td>
+    <td><div class="lead2">${escapeHtml(e.description||"—")}</div><div class="sub">${escapeHtml(e.place||e.vendor||"")}</div>${billSub(e)}</td>
     <td>${payerPill(e.payer)}</td>
     <td>${escapeHtml(e.split||"—")}</td>
-    <td class="num">${fmt.format(num(e.amount))}</td>
+    <td class="num">${fmt.format(expenseTotal(e))}</td>
     <td><button class="linkbtn" data-act="edit" data-type="expense" data-id="${e.id}">Edit</button></td>
   </tr>`).join("") : `<tr><td colspan="7">${empty("No expenses match.","wallet")}</td></tr>`;
   $("pane-expenses").innerHTML = `
@@ -1248,6 +1311,11 @@ function payerPill(p){
   if(p==="TJ") return `<span class="pill info" style="cursor:default">TJ</span>`;
   if(p==="EK") return `<span class="pill ok" style="cursor:default">EK</span>`;
   return `<span class="pill neutral" style="cursor:default">${escapeHtml(p||"TBD")}</span>`;
+}
+function billSub(e){
+  if(!isBillSplit(e)) return "";
+  const shares = expenseShares(e);
+  return `<div class="bill-sub">${escapeHtml(e.billSplitMode)} · TJ ${fmt.format(shares.tj)} · EK ${fmt.format(shares.ek)}</div>`;
 }
 
 /* ============================================================
@@ -1414,7 +1482,15 @@ function defaultRecord(type){
       payer: "TBD",
       payment: "Cash",
       amount: 0,
-      split: "Shared by Units"
+      split: "Shared by Units",
+      billSplitMode: "Off",
+      billIncludesTaxService: "Yes",
+      foodTJAmount: 0,
+      foodEKAmount: 0,
+      foodSharedAmount: 0,
+      taxServiceAmount: 0,
+      customTJAmount: 0,
+      customEKAmount: 0
     };
   }
   return {};
@@ -1423,17 +1499,22 @@ function fieldHtml(fields, rec={}){
   return fields.map(([key,label,type="text"])=>{
     const v = rec[key] ?? "";
     const wide = (type==="textarea"||["route","mainPlan","drivingPlan","mealsRest","actionNeeded","address","note","notes","task"].includes(key))?" wide":"";
+    if(key==="billSplitMode") return `<div class="split-note">Meal split: choose <b>Meal/order split</b> for TJ food, EK food, shared food, and tax/service allocation. Choose <b>Custom TJ/EK</b> when you already know each person's final share.</div><label class="${wide}">${label}${selectHtml(key, v, type)}</label>`;
     if(type==="textarea") return `<label class="${wide}">${label}<textarea name="${key}">${escapeHtml(v)}</textarea></label>`;
     if(type==="date") return `<label class="${wide}">${label}<input type="date" name="${key}" value="${escapeAttr(v)}"></label>`;
+    if(type==="time") return `<label class="${wide}">${label}<input type="time" name="${key}" value="${escapeAttr(v)}"></label>`;
     if(type==="number") return `<label class="${wide}">${label}<input type="number" name="${key}" value="${escapeAttr(v)}" inputmode="numeric"></label>`;
     if(type.startsWith("select:")){
-      const lk=type.split(":")[1];
-      const list = lk==="yesno"?["Yes","No"] : lk==="detailCategories"?detailCategories() : (db.lists[lk]||[]);
-      const opts = list.map(o=>`<option ${o===v?"selected":""}>${escapeHtml(o)}</option>`).join("");
-      return `<label class="${wide}">${label}<select name="${key}">${v&&!list.includes(v)?`<option selected>${escapeHtml(v)}</option>`:""}${opts}</select></label>`;
+      return `<label class="${wide}">${label}${selectHtml(key, v, type)}</label>`;
     }
     return `<label class="${wide}">${label}<input name="${key}" value="${escapeAttr(v)}"></label>`;
   }).join("");
+}
+function selectHtml(key, v, type){
+  const lk=type.split(":")[1];
+  const list = lk==="yesno"?["Yes","No"] : lk==="detailCategories"?detailCategories() : (db.lists[lk]||[]);
+  const opts = list.map(o=>`<option ${o===v?"selected":""}>${escapeHtml(o)}</option>`).join("");
+  return `<select name="${key}">${v&&!list.includes(v)?`<option selected>${escapeHtml(v)}</option>`:""}${opts}</select>`;
 }
 function recordFromForm(form, fields){
   const fd = new FormData(form), out={};
@@ -1445,6 +1526,7 @@ function saveEditor(e){
   if(!activeEdit) return;
   const { type, id, schema } = activeEdit;
   const rec = recordFromForm($("editForm"), schema.fields);
+  if(type==="expense" && isBillSplit(rec)) rec.amount = expenseTotal(rec);
   const list = db[schema.collection];
   if(id){ const i=list.findIndex(x=>x.id===id); if(i>=0) list[i]={...list[i],...rec}; }
   else { list.unshift({ id:newId(type), ...rec }); }

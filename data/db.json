@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 4,
   "metadata": {
     "title": "Bintaro to Bali Road Trip",
     "subtitle": "Offline-first trip, accommodation, checklist, and cost dashboard",
@@ -55,6 +55,11 @@
       "Booked",
       "Confirmed",
       "Done"
+    ],
+    "billSplitModes": [
+      "Off",
+      "Meal/order split",
+      "Custom TJ/EK"
     ]
   },
   "tripPlans": [
@@ -188,7 +193,12 @@
       "checkInOut": "Check-in 14:00-23:59; check-out 12:00",
       "status": "Confirmed",
       "contact": "+62 851 7109 0002",
-      "note": "Hotel capacity adjusted to 2 rooms. Keep updated proof/voucher offline."
+      "note": "Hotel capacity adjusted to 2 rooms. Keep updated proof/voucher offline.",
+      "checkInDate": "",
+      "checkInFrom": "",
+      "checkInUntil": "",
+      "checkOutDate": "",
+      "checkOutTime": ""
     },
     {
       "id": "stay-003",
@@ -201,7 +211,12 @@
       "checkInOut": "Arrival 14 Jun; departure 15 Jun",
       "status": "Confirmed - changed",
       "contact": "+62 823 4007 4348",
-      "note": "Arrival moved up; reconfirm date with Lovina Life Room & Cafe."
+      "note": "Arrival moved up; reconfirm date with Lovina Life Room & Cafe.",
+      "checkInDate": "",
+      "checkInFrom": "",
+      "checkInUntil": "",
+      "checkOutDate": "",
+      "checkOutTime": ""
     },
     {
       "id": "stay-004",
@@ -214,7 +229,12 @@
       "checkInOut": "Arrival 15 Jun; departure 16 Jun",
       "status": "Confirmed - changed",
       "contact": "+62 878 6114 9009",
-      "note": "Arrival moved up one night; reconfirm revised date and late arrival."
+      "note": "Arrival moved up one night; reconfirm revised date and late arrival.",
+      "checkInDate": "",
+      "checkInFrom": "",
+      "checkInUntil": "",
+      "checkOutDate": "",
+      "checkOutTime": ""
     },
     {
       "id": "stay-005",
@@ -227,7 +247,12 @@
       "checkInOut": "2 nights",
       "status": "Need booking",
       "contact": "",
-      "note": "Moved up to 15-17 Jun; book 2 nights with parking."
+      "note": "Moved up to 15-17 Jun; book 2 nights with parking.",
+      "checkInDate": "",
+      "checkInFrom": "",
+      "checkInUntil": "",
+      "checkOutDate": "",
+      "checkOutTime": ""
     },
     {
       "id": "stay-006",
@@ -240,7 +265,12 @@
       "checkInOut": "1 night",
       "status": "Need booking",
       "contact": "",
-      "note": "Moved up to 17 Jun; book 1 night with parking."
+      "note": "Moved up to 17 Jun; book 1 night with parking.",
+      "checkInDate": "",
+      "checkInFrom": "",
+      "checkInUntil": "",
+      "checkOutDate": "",
+      "checkOutTime": ""
     },
     {
       "id": "stay-007",
@@ -253,7 +283,12 @@
       "checkInOut": "1 night",
       "status": "Need decision",
       "contact": "",
-      "note": "Moved up to 18 Jun; decide fun stay vs easier return."
+      "note": "Moved up to 18 Jun; decide fun stay vs easier return.",
+      "checkInDate": "",
+      "checkInFrom": "",
+      "checkInUntil": "",
+      "checkOutDate": "",
+      "checkOutTime": ""
     },
     {
       "id": "stay-008",
@@ -266,7 +301,12 @@
       "checkInOut": "1 night",
       "status": "Need booking",
       "contact": "",
-      "note": "Moved up to 19 Jun; book secure parking and late check-in."
+      "note": "Moved up to 19 Jun; book secure parking and late check-in.",
+      "checkInDate": "",
+      "checkInFrom": "",
+      "checkInUntil": "",
+      "checkOutDate": "",
+      "checkOutTime": ""
     }
   ],
   "checklist": [
@@ -419,7 +459,15 @@
       "amount": 0,
       "split": "Shared by Units",
       "buffer": "Yes",
-      "notes": ""
+      "notes": "",
+      "billSplitMode": "Off",
+      "billIncludesTaxService": "Yes",
+      "foodTJAmount": 0,
+      "foodEKAmount": 0,
+      "foodSharedAmount": 0,
+      "taxServiceAmount": 0,
+      "customTJAmount": 0,
+      "customEKAmount": 0
     },
     {
       "id": "exp-002",
@@ -433,7 +481,15 @@
       "amount": 0,
       "split": "Shared by Units",
       "buffer": "Yes",
-      "notes": ""
+      "notes": "",
+      "billSplitMode": "Off",
+      "billIncludesTaxService": "Yes",
+      "foodTJAmount": 0,
+      "foodEKAmount": 0,
+      "foodSharedAmount": 0,
+      "taxServiceAmount": 0,
+      "customTJAmount": 0,
+      "customEKAmount": 0
     },
     {
       "id": "exp-003",
@@ -447,7 +503,15 @@
       "amount": 0,
       "split": "Shared by Units",
       "buffer": "Yes",
-      "notes": ""
+      "notes": "",
+      "billSplitMode": "Off",
+      "billIncludesTaxService": "Yes",
+      "foodTJAmount": 0,
+      "foodEKAmount": 0,
+      "foodSharedAmount": 0,
+      "taxServiceAmount": 0,
+      "customTJAmount": 0,
+      "customEKAmount": 0
     },
     {
       "id": "exp-004",
@@ -461,7 +525,15 @@
       "amount": 0,
       "split": "Shared by Units",
       "buffer": "Yes",
-      "notes": ""
+      "notes": "",
+      "billSplitMode": "Off",
+      "billIncludesTaxService": "Yes",
+      "foodTJAmount": 0,
+      "foodEKAmount": 0,
+      "foodSharedAmount": 0,
+      "taxServiceAmount": 0,
+      "customTJAmount": 0,
+      "customEKAmount": 0
     },
     {
       "id": "exp-005",
@@ -475,7 +547,15 @@
       "amount": 0,
       "split": "Shared by Units",
       "buffer": "Yes",
-      "notes": ""
+      "notes": "",
+      "billSplitMode": "Off",
+      "billIncludesTaxService": "Yes",
+      "foodTJAmount": 0,
+      "foodEKAmount": 0,
+      "foodSharedAmount": 0,
+      "taxServiceAmount": 0,
+      "customTJAmount": 0,
+      "customEKAmount": 0
     },
     {
       "id": "exp-006",
@@ -489,7 +569,15 @@
       "amount": 0,
       "split": "Shared by Units",
       "buffer": "Yes",
-      "notes": ""
+      "notes": "",
+      "billSplitMode": "Off",
+      "billIncludesTaxService": "Yes",
+      "foodTJAmount": 0,
+      "foodEKAmount": 0,
+      "foodSharedAmount": 0,
+      "taxServiceAmount": 0,
+      "customTJAmount": 0,
+      "customEKAmount": 0
     },
     {
       "id": "exp-007",
@@ -503,7 +591,15 @@
       "amount": 0,
       "split": "Shared by Units",
       "buffer": "Yes",
-      "notes": ""
+      "notes": "",
+      "billSplitMode": "Off",
+      "billIncludesTaxService": "Yes",
+      "foodTJAmount": 0,
+      "foodEKAmount": 0,
+      "foodSharedAmount": 0,
+      "taxServiceAmount": 0,
+      "customTJAmount": 0,
+      "customEKAmount": 0
     }
   ],
   "budget": [
@@ -853,7 +949,7 @@
       "location": "Surabaya → Ketapang / Gilimanuk → Lovina",
       "detail": "432 km estimated",
       "km": 432,
-      "liters": 48.0,
+      "liters": 48,
       "unitPrice": 6800,
       "baseAmount": 326400,
       "buffer": "Yes",
@@ -897,7 +993,7 @@
       "location": "Lovina → Kintamani",
       "detail": "81 km estimated",
       "km": 81,
-      "liters": 9.0,
+      "liters": 9,
       "unitPrice": 6800,
       "baseAmount": 61200,
       "buffer": "Yes",

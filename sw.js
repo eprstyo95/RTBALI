@@ -1,4 +1,4 @@
-const CACHE_NAME = "rtbali-offline-v1";
+const CACHE_NAME = "rtbali-offline-v2";
 const APP_SHELL = [
   "./",
   "./index.html",
@@ -57,4 +57,3 @@ self.addEventListener("fetch", (event) => {
     })
   );
 });
-
