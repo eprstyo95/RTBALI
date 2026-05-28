@@ -97,6 +97,10 @@ For GitHub Pages, do not commit `firebase-config.json`. Open the live app and us
 The app saves those values only in that browser's localStorage, so GitHub can host
 the app without exposing the sync key in the repository.
 
+After one device is configured, use **Copy setup link** and send that link to your
+other devices. Opening the link saves the cloud config once, then the app removes
+the secret from the address bar. Treat that link like a password.
+
 ### Telegram commands
 
 In your Telegram group:

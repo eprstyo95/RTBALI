@@ -52,6 +52,34 @@
     localStorage.setItem(LOCAL_CONFIG_KEY, JSON.stringify(config));
   }
 
+  function configFromUrl() {
+    const hash = new URLSearchParams(location.hash.replace(/^#/, ""));
+    const query = new URLSearchParams(location.search);
+    const get = (key) => hash.get(key) || query.get(key);
+    const syncKey = get("sync") || get("syncKey") || get("key");
+    if (!syncKey) return null;
+    return normalizeConfig({
+      apiBase: get("api") || DEFAULT_API_BASE,
+      tripId: get("trip") || DEFAULT_TRIP_ID,
+      syncKey
+    });
+  }
+
+  function clearSetupUrl() {
+    if (!history.replaceState) return;
+    history.replaceState(null, document.title, location.pathname);
+  }
+
+  function setupLink(config = loadLocalConfig()) {
+    if (!config) return "";
+    const params = new URLSearchParams({
+      api: config.apiBase,
+      trip: config.tripId,
+      sync: config.syncKey
+    });
+    return `${location.origin}${location.pathname}#${params.toString()}`;
+  }
+
   function promptConfig(existing = {}) {
     const apiBase = prompt("Firebase API URL", existing.apiBase || DEFAULT_API_BASE);
     if (!apiBase) return null;
@@ -167,6 +195,15 @@
       saveLocalConfig(next);
       window.location.reload();
     }));
+    topActions.appendChild(button("Copy setup link", "btn ghost", async () => {
+      const link = setupLink(config);
+      try {
+        await navigator.clipboard.writeText(link);
+        status("Setup link copied");
+      } catch (_) {
+        prompt("Copy setup link", link);
+      }
+    }));
   }
 
   function installSetupOnly() {
@@ -189,6 +226,12 @@
 
   ready(async () => {
     if (!window.RTBALI) return;
+    const urlConfig = configFromUrl();
+    if (urlConfig) {
+      saveLocalConfig(urlConfig);
+      clearSetupUrl();
+      window.RTBALI.toast("Cloud setup saved");
+    }
     const config = await loadConfig();
     if (!config) {
       installSetupOnly();
