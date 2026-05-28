@@ -87,6 +87,47 @@ function normalizeMemberName(value) {
   return text || "UNMAPPED";
 }
 
+function memberLabels(members = []) {
+  const labels = members.map((member) => member.member || member).filter(Boolean);
+  return labels.length ? labels : ["TJ", "EK", "P3", "P4"];
+}
+
+function pickNumber(raw, keys) {
+  const keyPattern = keys.map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const match = String(raw || "").match(new RegExp(`\\b(?:${keyPattern})\\s*(?:[:=])?\\s*(?:rp\\s*)?([\\d.,]+)`, "i"));
+  return match ? num(match[1]) : 0;
+}
+
+function pickText(raw, keys) {
+  const stopWords = [
+    "paid", "payer", "bayar", "by", "split", "date", "tgl", "place", "route", "vendor", "merchant",
+    "desc", "description", "note", "notes", "payment", "pay", "tjfood", "tjorder", "tjordered",
+    "ekfood", "ekorder", "ekordered", "shared", "sharedfood", "tax", "service", "taxservice",
+    "customtj", "customek", "tjshare", "ekshare", "amount", "total"
+  ];
+  const keyPattern = keys.map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const stopPattern = stopWords.map((key) => key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  const match = String(raw || "").match(new RegExp(`\\b(?:${keyPattern})\\s*(?:[:=])?\\s+(.+?)(?=\\s+(?:${stopPattern})\\b|$)`, "i"));
+  return clean(match?.[1]).replace(/^["']|["']$/g, "");
+}
+
+function pickDate(raw) {
+  return String(raw || "").match(/\b(?:date|tgl)\s*(?:[:=])?\s*(\d{4}-\d{2}-\d{2})\b/i)?.[1] || todayIso();
+}
+
+function expenseTotal(expense) {
+  if (expense.billSplitMode === "Custom TJ/EK") {
+    const custom = num(expense.customTJAmount) + num(expense.customEKAmount);
+    return custom || num(expense.amount);
+  }
+  if (expense.billSplitMode === "Meal/order split") {
+    const food = num(expense.foodTJAmount) + num(expense.foodEKAmount) + num(expense.foodSharedAmount);
+    const taxes = expense.billIncludesTaxService === "No" ? 0 : num(expense.taxServiceAmount);
+    return food + taxes || num(expense.amount);
+  }
+  return num(expense.amount);
+}
+
 async function sendTelegram(chatId, text, extra = {}) {
   if (!TELEGRAM_TOKEN) {
     logger.warn("TELEGRAM_BOT_TOKEN not configured");
@@ -135,6 +176,8 @@ function helpText() {
     "<b>Manual expense</b>",
     "<code>/expense meal 220000 paid TJ split 50/50</code>",
     "<code>/meal 220000 paid EK split order</code>",
+    "<code>/meal paid TJ split order tjfood 120000 ekfood 80000 shared 50000 tax 30000</code>",
+    "<code>/expense food paid EK split custom customtj 150000 customek 90000</code>",
     "",
     "<b>Receipt OCR</b>",
     "Send a receipt photo, then confirm the draft.",
@@ -210,52 +253,60 @@ function parseExpenseText(text, member) {
   const parts = raw.split(/\s+/);
   const lower = parts.map((p) => p.toLowerCase());
   const command = lower[0]?.replace(/^\//, "");
-  const categoryWord = lower[1] && !/^\d/.test(lower[1]) ? lower[1] : lower[0];
+  const detailKeys = new Set([
+    "paid", "payer", "bayar", "by", "split", "date", "tgl", "place", "route", "vendor", "merchant",
+    "desc", "description", "note", "notes", "payment", "pay", "amount", "total", "tjfood", "ekfood",
+    "shared", "sharedfood", "tax", "service", "taxservice", "customtj", "customek", "tjshare", "ekshare"
+  ]);
+  const categoryWord = lower[1] && !/^\d/.test(lower[1]) && !detailKeys.has(lower[1]) ? lower[1] : command;
   const category = CATEGORY_ALIASES[categoryWord] || "Other";
-  const amount = num(raw.match(/(?:^|\s)(?:rp\s*)?([\d.,]{4,})(?:\s|$)/i)?.[1]);
+  const amount = pickNumber(raw, ["amount", "total"]) || num(raw.match(/(?:^|\s)(?:rp\s*)?([\d.,]{4,})(?:\s|$)/i)?.[1]);
   const paidMatch = raw.match(/\b(?:paid|payer|bayar|by)\s+([a-z0-9_]+)/i);
-  const splitMatch = raw.match(/\bsplit\s+([a-z0-9/_ -]+)/i);
+  const splitMatch = raw.match(/\bsplit\s+([a-z0-9/_-]+)/i);
   const payer = normalizeMemberName(paidMatch?.[1] || member?.member || "TBD");
   const splitRaw = clean(splitMatch?.[1]).toLowerCase();
   let split = "Shared by Units";
   let billSplitMode = "Off";
-  if (splitRaw.includes("order") || splitRaw.includes("meal")) {
+  if (splitRaw.includes("order") || splitRaw.includes("meal") || /\b(tjfood|ekfood|sharedfood)\b/i.test(raw)) {
     split = "Custom";
     billSplitMode = "Meal/order split";
   } else if (splitRaw.includes("50")) split = "Equal 50/50";
   else if (splitRaw.includes("tj")) split = "TJ only";
   else if (splitRaw.includes("ek")) split = "EK only";
-  else if (splitRaw.includes("custom")) {
+  else if (splitRaw.includes("custom") || /\b(customtj|customek|tjshare|ekshare)\b/i.test(raw)) {
     split = "Custom";
     billSplitMode = "Custom TJ/EK";
   }
 
-  const description = raw
+  const explicitDescription = pickText(raw, ["desc", "description"]);
+  let description = explicitDescription || raw
     .replace(/^\/?(expense|exp|meal|food|makan)\s*/i, "")
     .replace(/\b(?:paid|payer|bayar|by)\s+[a-z0-9_]+/i, "")
-    .replace(/\bsplit\s+[a-z0-9/_ -]+/i, "")
-    .trim() || `${category} ${rupiah(amount)}`;
+    .replace(/\bsplit\s+[a-z0-9/_-]+/i, "")
+    .replace(/\b(?:amount|total|tjfood|tjorder|tjordered|ekfood|ekorder|ekordered|shared|sharedfood|tax|service|taxservice|customtj|customek|tjshare|ekshare)\s*(?:[:=])?\s*(?:rp\s*)?[\d.,]+/gi, "")
+    .replace(/\b(?:date|tgl|place|route|vendor|merchant|payment|pay|desc|description|note|notes)\s*(?:[:=])?\s+.+?(?=\s+(?:paid|payer|bayar|by|split|amount|total|tjfood|tjorder|tjordered|ekfood|ekorder|ekordered|shared|sharedfood|tax|service|taxservice|customtj|customek|tjshare|ekshare|date|tgl|place|route|vendor|merchant|payment|pay|desc|description|note|notes)\b|$)/gi, "")
+    .trim();
 
-  return {
+  const expense = {
     id: id("tg-exp"),
-    date: todayIso(),
-    place: "",
+    date: pickDate(raw),
+    place: pickText(raw, ["place", "route"]),
     category,
     description,
-    vendor: "",
+    vendor: pickText(raw, ["vendor", "merchant"]),
     payer,
-    payment: "Cash",
+    payment: pickText(raw, ["payment", "pay"]) || "Cash",
     amount,
     split,
     billSplitMode,
-    billIncludesTaxService: "Yes",
-    foodTJAmount: 0,
-    foodEKAmount: 0,
-    foodSharedAmount: 0,
-    taxServiceAmount: 0,
-    customTJAmount: 0,
-    customEKAmount: 0,
-    notes: raw,
+    billIncludesTaxService: /\b(?:notax|no-tax|tax\s+no|tax\s*=\s*no|incltax\s+no|incltax\s*=\s*no)\b/i.test(raw) ? "No" : "Yes",
+    foodTJAmount: pickNumber(raw, ["tjfood", "tjorder", "tjordered"]),
+    foodEKAmount: pickNumber(raw, ["ekfood", "ekorder", "ekordered"]),
+    foodSharedAmount: pickNumber(raw, ["sharedfood", "shared"]),
+    taxServiceAmount: pickNumber(raw, ["taxservice", "tax", "service"]),
+    customTJAmount: pickNumber(raw, ["customtj", "tjshare"]),
+    customEKAmount: pickNumber(raw, ["customek", "ekshare"]),
+    notes: pickText(raw, ["note", "notes"]) || raw,
     source: "telegram",
     status: command === "draft" ? "draft" : "confirmed",
     createdByTelegramUserId: member?.telegramUserId || "",
@@ -263,12 +314,40 @@ function parseExpenseText(text, member) {
     createdAt: nowField(),
     updatedAt: nowField()
   };
+  expense.amount = expenseTotal(expense);
+  if (!description) {
+    description = `${category} ${rupiah(expense.amount)}`;
+    expense.description = description;
+  }
+  return expense;
 }
 
 function shares(expense, members) {
-  const amount = Number(expense.amount || 0);
+  const amount = expenseTotal(expense);
   const labels = members.length ? members : ["TJ", "EK", "P3", "P4"];
   if (!amount) return Object.fromEntries(labels.map((name) => [name, 0]));
+  if (expense.billSplitMode === "Custom TJ/EK") {
+    return Object.fromEntries(labels.map((name) => {
+      if (name === "TJ") return [name, num(expense.customTJAmount)];
+      if (name === "EK") return [name, num(expense.customEKAmount)];
+      return [name, 0];
+    }));
+  }
+  if (expense.billSplitMode === "Meal/order split") {
+    const tjFood = num(expense.foodTJAmount);
+    const ekFood = num(expense.foodEKAmount);
+    const shared = num(expense.foodSharedAmount);
+    const baseTJ = tjFood + shared / 2;
+    const baseEK = ekFood + shared / 2;
+    const base = baseTJ + baseEK;
+    const tax = expense.billIncludesTaxService === "No" ? 0 : num(expense.taxServiceAmount);
+    const tjTax = base ? tax * (baseTJ / base) : tax / 2;
+    return Object.fromEntries(labels.map((name) => {
+      if (name === "TJ") return [name, baseTJ + tjTax];
+      if (name === "EK") return [name, baseEK + (tax - tjTax)];
+      return [name, 0];
+    }));
+  }
   if (expense.split === "TJ only") return { TJ: amount, EK: 0, P3: 0, P4: 0 };
   if (expense.split === "EK only") return { TJ: 0, EK: amount, P3: 0, P4: 0 };
   const each = amount / labels.length;
@@ -280,7 +359,7 @@ async function settlement(tripId) {
     tripRef(tripId).collection("expenses").where("status", "==", "confirmed").get(),
     tripRef(tripId).collection("members").get()
   ]);
-  const members = memberSnap.docs.map((doc) => doc.data().member).filter(Boolean);
+  const members = memberLabels(memberSnap.docs.map((doc) => doc.data()));
   const paid = {};
   const owes = {};
   let total = 0;
@@ -290,7 +369,7 @@ async function settlement(tripId) {
   }
   expenseSnap.forEach((doc) => {
     const exp = doc.data();
-    const amount = Number(exp.amount || 0);
+    const amount = expenseTotal(exp);
     total += amount;
     paid[exp.payer] = (paid[exp.payer] || 0) + amount;
     const expShares = shares(exp, members);
@@ -544,7 +623,13 @@ async function handleCallback(tripId, callbackQuery) {
       "<code>/meal 220000 paid EK split order</code>",
       "<code>/expense fuel 500000 paid EK split equal</code>",
       "",
-      "Replace TJ/EK with your linked member code."
+      "<b>Detailed meal split</b>",
+      "<code>/meal paid TJ split order tjfood 120000 ekfood 80000 shared 50000 tax 30000 place Warung Apple</code>",
+      "",
+      "<b>Custom final shares</b>",
+      "<code>/expense food paid EK split custom customtj 150000 customek 90000 vendor La Luna</code>",
+      "",
+      "Optional keys: date 2026-06-14, place, vendor, payment, desc, note, notax."
     ].join("\n"), { reply_markup: menuKeyboard() });
     return;
   }

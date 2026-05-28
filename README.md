@@ -118,12 +118,18 @@ In your Telegram group:
 /unlink
 /expense meal 220000 paid TJ split 50/50
 /meal 220000 paid EK split order
+/meal paid TJ split order tjfood 120000 ekfood 80000 shared 50000 tax 30000 place Warung Apple
+/expense food paid EK split custom customtj 150000 customek 90000 vendor La Luna
 /saldo
 /who
 ```
 
 `/menu` opens Telegram buttons for saldo, linked members, examples, OCR help,
 and unlinking yourself from the trip.
+
+Detailed expense keys match the web ledger: `date`, `place`, `vendor`,
+`payment`, `desc`, `note`, `tjfood`, `ekfood`, `shared`, `tax`, `customtj`,
+`customek`, and `notax`.
 
 Send a receipt photo to create an OCR draft. Confirm it with:
 
