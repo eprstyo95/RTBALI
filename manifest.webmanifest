@@ -1,0 +1,11 @@
+{
+  "name": "RTBALI Expedition Command Center",
+  "short_name": "RTBALI",
+  "description": "Offline-first Bintaro to Bali road-trip planner and local cost database.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4ede0",
+  "theme_color": "#0d7d72"
+}
+

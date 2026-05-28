@@ -1,0 +1,1561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RTBALI · Expedition Command Center</title>
+<meta name="description" content="Offline-first road-trip command center for the Bintaro to Bali expedition: itinerary, route map, stays, checklist, cost plan, expenses and a unit-aware settlement engine.">
+<meta name="theme-color" content="#0d7d72">
+<link rel="manifest" href="manifest.webmanifest">
+<style>
+/* ===================== THEME TOKENS ===================== */
+:root{
+  --paper:#f4ede0; --paper2:#faf5ea; --card:#fffdf8; --card2:#f6efe2;
+  --ink:#22262d; --ink2:#3a4049; --muted:#7b7464; --faint:#a59c89;
+  --line:#e4dac6; --line2:#d3c6ab;
+  --teal:#0d7d72; --teal-d:#0a5f57; --teal-soft:#e1efec;
+  --clay:#cf5630; --clay-d:#a63f1f; --clay-soft:#fbe6dc;
+  --gold:#c98a1f; --gold-soft:#f7eccf;
+  --plum:#7a4b73;
+  --ok:#1f7a4d; --ok-soft:#e2f2e7;
+  --warn:#b5651d; --warn-soft:#f9ead4;
+  --bad:#b3271e; --bad-soft:#f8e0dd;
+  --info:#235b9e; --info-soft:#e2ebf7;
+  --shadow:0 16px 40px -18px rgba(45,33,15,.45);
+  --shadow-sm:0 4px 14px -8px rgba(45,33,15,.4);
+  --r:18px; --r-sm:12px; --r-lg:26px;
+  --maxw:1320px;
+  --grid-line:rgba(120,104,74,.07);
+  --topo:rgba(120,104,74,.05);
+}
+[data-theme="dark"]{
+  --paper:#10141a; --paper2:#141a22; --card:#1a212b; --card2:#222b37;
+  --ink:#f1ece0; --ink2:#cdd4dd; --muted:#94a0ad; --faint:#69737f;
+  --line:#2a333f; --line2:#384350;
+  --teal:#3fc3b2; --teal-d:#2aa294; --teal-soft:#143832;
+  --clay:#f0855a; --clay-d:#d8633a; --clay-soft:#3a1f16;
+  --gold:#e3b455; --gold-soft:#352b14;
+  --plum:#c79bc0;
+  --ok:#52c98a; --ok-soft:#11321f;
+  --warn:#e0a44c; --warn-soft:#33260f;
+  --bad:#f0837a; --bad-soft:#341614;
+  --info:#7fb0ec; --info-soft:#15243a;
+  --shadow:0 24px 60px -22px rgba(0,0,0,.7);
+  --shadow-sm:0 6px 18px -10px rgba(0,0,0,.6);
+  --grid-line:rgba(180,200,220,.05);
+  --topo:rgba(180,200,220,.04);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0; min-height:100vh; color:var(--ink);
+  font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size:15px; line-height:1.55;
+  background:
+    radial-gradient(circle at 8% -4%, color-mix(in srgb,var(--teal) 16%,transparent), transparent 30%),
+    radial-gradient(circle at 96% 0%, color-mix(in srgb,var(--clay) 16%,transparent), transparent 26%),
+    repeating-linear-gradient(0deg, var(--grid-line) 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(90deg, var(--grid-line) 0 1px, transparent 1px 46px),
+    var(--paper);
+  background-attachment:fixed;
+  -webkit-font-smoothing:antialiased;
+  transition:background-color .35s, color .35s;
+}
+h1,h2,h3,h4,p{margin:0}
+button,input,select,textarea{font:inherit;color:inherit}
+a{color:var(--teal-d);text-decoration:none}
+a:hover{text-decoration:underline}
+.mono{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+.serif{font-family:Georgia,"Times New Roman",serif}
+
+/* ===================== SHELL ===================== */
+.shell{width:min(var(--maxw),calc(100% - 30px));margin:0 auto;padding:26px 0 90px}
+.topbar{display:flex;justify-content:space-between;gap:26px;align-items:flex-end;flex-wrap:wrap;margin-bottom:22px}
+.brand .kicker{display:flex;align-items:center;gap:9px;color:var(--clay-d);font-weight:700;letter-spacing:.18em;text-transform:uppercase;font-size:11.5px}
+.brand .kicker .dot{width:8px;height:8px;border-radius:50%;background:var(--clay);box-shadow:0 0 0 4px var(--clay-soft)}
+.brand h1{font-family:Georgia,"Times New Roman",serif;font-weight:800;font-size:clamp(34px,5.4vw,62px);line-height:.92;letter-spacing:-.025em;margin-top:8px}
+.brand h1 em{font-style:italic;color:var(--teal-d)}
+.brand .lead{color:var(--muted);max-width:560px;margin-top:11px;font-size:14.5px}
+.top-actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;justify-content:flex-end}
+
+.btn{display:inline-flex;align-items:center;gap:7px;border:1px solid var(--line2);border-radius:11px;background:var(--card);
+  padding:9px 13px;font-weight:600;font-size:13.5px;cursor:pointer;transition:.15s;white-space:nowrap;box-shadow:var(--shadow-sm)}
+.btn:hover{transform:translateY(-1px);border-color:var(--ink2)}
+.btn:active{transform:translateY(0)}
+.btn.primary{background:var(--teal);border-color:var(--teal);color:#fff;box-shadow:0 10px 22px -12px var(--teal)}
+.btn.primary:hover{background:var(--teal-d);border-color:var(--teal-d)}
+.btn.ghost{background:transparent;box-shadow:none;border-color:var(--line2)}
+.btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--line2))}
+.btn.tiny{padding:5px 9px;font-size:12px;border-radius:9px;box-shadow:none}
+.btn .ic{width:15px;height:15px;display:inline-block}
+.icon-btn{display:inline-flex;align-items:center;justify-content:center;width:38px;height:38px;border-radius:11px;border:1px solid var(--line2);background:var(--card);cursor:pointer;box-shadow:var(--shadow-sm);transition:.15s}
+.icon-btn:hover{transform:translateY(-1px);border-color:var(--ink2)}
+.file-btn{position:relative;overflow:hidden}
+.file-btn input{position:absolute;inset:0;opacity:0;cursor:pointer;font-size:0}
+
+.sync-pill{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:7px 12px;font-size:12px;font-weight:600;background:var(--teal-soft);color:var(--teal-d);border:1px solid color-mix(in srgb,var(--teal) 25%,transparent)}
+.sync-pill .led{width:7px;height:7px;border-radius:50%;background:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 25%,transparent)}
+.sync-pill.dirty{background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.sync-pill.dirty .led{background:var(--warn);box-shadow:0 0 0 3px color-mix(in srgb,var(--warn) 25%,transparent)}
+
+/* ===================== HERO / COUNTDOWN ===================== */
+.hero{display:grid;grid-template-columns:1.05fr .95fr;gap:16px;margin-bottom:18px}
+.hero-card{background:linear-gradient(150deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:var(--shadow);padding:22px;position:relative;overflow:hidden}
+.hero-left{display:flex;flex-direction:column;justify-content:space-between;gap:18px}
+.hero-left::after{content:"";position:absolute;right:-40px;top:-40px;width:200px;height:200px;border-radius:50%;
+  background:radial-gradient(circle,color-mix(in srgb,var(--gold) 40%,transparent),transparent 70%);pointer-events:none}
+.countdown .lbl{color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+.countdown .big{font-family:Georgia,"Times New Roman",serif;font-weight:900;letter-spacing:-.04em;font-size:clamp(48px,9vw,86px);line-height:.9;margin-top:4px;
+  background:linear-gradient(120deg,var(--clay-d),var(--gold));-webkit-background-clip:text;background-clip:text;color:transparent}
+.countdown .sub{color:var(--ink2);font-weight:600;margin-top:6px}
+.hero-meta{display:flex;gap:18px;flex-wrap:wrap;position:relative}
+.hero-meta .m .v{font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:22px}
+.hero-meta .m .k{color:var(--muted);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.08em}
+
+.hero-right{padding:0;display:flex;flex-direction:column}
+.hero-right .map-head{padding:16px 18px 6px;display:flex;justify-content:space-between;align-items:baseline}
+.hero-right .map-head h3{font-family:Georgia,"Times New Roman",serif;font-size:18px;font-weight:700}
+.hero-right .map-head span{color:var(--muted);font-size:12px;font-weight:600}
+.mini-map{flex:1;min-height:170px;padding:0 6px 8px}
+
+/* ===================== KPI ===================== */
+.kpis{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px;margin-bottom:18px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px 15px;box-shadow:var(--shadow-sm);position:relative;overflow:hidden}
+.kpi .k{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em}
+.kpi .v{font-family:Georgia,"Times New Roman",serif;font-weight:800;font-size:25px;letter-spacing:-.02em;margin-top:9px;line-height:1}
+.kpi .s{color:var(--muted);font-size:11.5px;margin-top:7px;line-height:1.35}
+.kpi .accent{position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--teal)}
+.kpi.clay .accent{background:var(--clay)} .kpi.gold .accent{background:var(--gold)}
+.kpi.ok .accent{background:var(--ok)} .kpi.warn .accent{background:var(--warn)} .kpi.info .accent{background:var(--info)}
+.kpi .v.pos{color:var(--bad)} .kpi .v.neg{color:var(--ok)}
+
+/* ===================== COMMAND BAR ===================== */
+.command{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-sm);padding:12px;margin-bottom:16px}
+.command-row{display:grid;grid-template-columns:minmax(0,1.7fr) minmax(150px,.55fr) minmax(150px,.55fr);gap:11px}
+.field{display:grid;gap:5px}
+.field>span{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em}
+.search-wrap{position:relative}
+.search-wrap .si{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--faint);width:16px;height:16px}
+.search-wrap input{padding-left:34px}
+input,select,textarea{width:100%;border:1px solid var(--line2);border-radius:10px;padding:9px 11px;background:var(--paper2);outline:none;transition:.15s;font-size:14px}
+input:focus,select:focus,textarea:focus{border-color:var(--teal);box-shadow:0 0 0 3px color-mix(in srgb,var(--teal) 18%,transparent);background:var(--card)}
+textarea{min-height:78px;resize:vertical;font-family:inherit}
+select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%237b7464' stroke-width='1.6' fill='none' stroke-linecap='round'/></svg>");background-repeat:no-repeat;background-position:right 11px center;padding-right:30px}
+
+/* ===================== TABS ===================== */
+.tabs{display:flex;gap:6px;flex-wrap:wrap;background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:8px;box-shadow:var(--shadow-sm);margin-bottom:16px;position:sticky;top:10px;z-index:30;backdrop-filter:blur(6px)}
+.tab{display:inline-flex;align-items:center;gap:7px;border:1px solid transparent;background:transparent;color:var(--muted);padding:9px 13px;border-radius:11px;font-weight:600;cursor:pointer;font-size:13.5px;transition:.15s}
+.tab .ic{width:16px;height:16px}
+.tab:hover{color:var(--ink);background:var(--card2)}
+.tab.active{color:#fff;background:var(--teal);box-shadow:0 8px 18px -10px var(--teal)}
+.tab .badge{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11px;background:var(--card2);color:var(--ink2);border-radius:999px;padding:1px 7px;font-weight:500}
+.tab.active .badge{background:rgba(255,255,255,.22);color:#fff}
+
+.pane{display:none;animation:rise .35s ease}
+.pane.active{display:block}
+@keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+
+/* ===================== PANELS / SECTIONS ===================== */
+.panel{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-sm);padding:18px;margin-bottom:16px}
+.sec-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.sec-head h2{font-family:Georgia,"Times New Roman",serif;font-size:21px;font-weight:700;letter-spacing:-.01em;display:flex;align-items:center;gap:9px}
+.sec-head h2 .ic{width:19px;height:19px;color:var(--teal-d)}
+.sec-head .meta{color:var(--muted);font-size:12.5px;font-weight:600}
+.sec-head .right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grid-2{display:grid;grid-template-columns:1.3fr .7fr;gap:16px}
+.grid-2b{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.empty{color:var(--muted);border:1.5px dashed var(--line2);border-radius:var(--r-sm);padding:30px;text-align:center;font-size:13.5px}
+.empty .ic{width:26px;height:26px;color:var(--faint);margin-bottom:8px;display:block;margin-inline:auto}
+
+/* ===================== CHARTS ===================== */
+.bars{display:grid;gap:9px}
+.bar-row{display:grid;grid-template-columns:140px minmax(0,1fr) 116px;gap:11px;align-items:center}
+.bar-row .nm{font-weight:600;font-size:13px;display:flex;align-items:center;gap:7px}
+.bar-row .nm .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.track{height:13px;border-radius:999px;background:var(--card2);overflow:hidden;border:1px solid var(--line)}
+.track .fill{height:100%;border-radius:inherit;background:linear-gradient(90deg,var(--teal),var(--gold));transition:width .6s cubic-bezier(.2,.8,.2,1)}
+.track.tall{height:16px}
+.amt{text-align:right;font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-weight:500;font-size:13px}
+
+.rings{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.ring-card{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px;text-align:center}
+.ring{position:relative;width:96px;height:96px;margin:4px auto 8px}
+.ring svg{transform:rotate(-90deg)}
+.ring .pc{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-family:Georgia,"Times New Roman",serif;font-weight:800;font-size:22px}
+.ring-card .rl{font-weight:600;font-size:13px}
+.ring-card .rs{color:var(--muted);font-size:11.5px;margin-top:2px}
+
+/* settlement */
+.settle .line{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.settle .line:last-child{border-bottom:0}
+.settle .line .v{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-weight:500}
+.settle .verdict{margin-top:12px;background:var(--ok-soft);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);color:var(--ok);
+  border-radius:var(--r-sm);padding:13px;font-weight:600;display:flex;gap:9px;align-items:center}
+.settle .verdict.pay{background:var(--clay-soft);border-color:color-mix(in srgb,var(--clay) 30%,transparent);color:var(--clay-d)}
+.settle .verdict .ic{width:20px;height:20px;flex:none}
+.settle .note{color:var(--muted);font-size:12px;margin-top:8px}
+
+/* next actions */
+.next-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
+.next-card{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:13px}
+.next-card .h{display:flex;align-items:center;gap:7px;color:var(--clay-d);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:9px}
+.next-card .h .ic{width:15px;height:15px}
+.next-card ul{margin:0;padding:0;list-style:none;display:grid;gap:8px}
+.next-card li{font-size:13px;line-height:1.4;display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:start}
+.next-card li .d{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11px;color:var(--teal-d);background:var(--teal-soft);padding:1px 6px;border-radius:6px;white-space:nowrap;font-weight:500}
+.next-card .none{color:var(--muted);font-size:13px}
+
+/* ===================== ITEM CARDS ===================== */
+.cards{display:grid;gap:12px}
+.item{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:15px;display:grid;grid-template-columns:84px minmax(0,1fr) auto;gap:15px;align-items:start;box-shadow:var(--shadow-sm);transition:.15s;position:relative}
+.item:hover{border-color:var(--line2);box-shadow:var(--shadow)}
+.item .date{text-align:center}
+.item .date .d{font-family:Georgia,"Times New Roman",serif;font-weight:800;font-size:19px;line-height:1}
+.item .date .m{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase}
+.item .date .dow{display:inline-block;margin-top:6px;font-size:10.5px;font-weight:700;color:var(--teal-d);background:var(--teal-soft);border-radius:6px;padding:2px 7px}
+.item .body h3{font-family:Georgia,"Times New Roman",serif;font-size:17px;font-weight:700;margin-bottom:5px}
+.item .body .route{color:var(--ink2);font-weight:600;font-size:13.5px}
+.item .body p{color:var(--muted);font-size:13px;margin-top:6px;line-height:1.5}
+.item .body .tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;border-radius:999px;padding:4px 10px;background:var(--card2);border:1px solid var(--line);color:var(--ink2)}
+.chip .ic{width:13px;height:13px}
+.chip.link{color:var(--teal-d);background:var(--teal-soft);border-color:color-mix(in srgb,var(--teal) 22%,transparent)}
+.chip.cost{color:var(--gold);background:var(--gold-soft);border-color:color-mix(in srgb,var(--gold) 30%,transparent)}
+.item .side{display:grid;justify-items:end;gap:9px}
+.pill{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 11px;font-size:12px;font-weight:700;border:1px solid transparent;cursor:default}
+.pill .ic{width:13px;height:13px}
+.pill.ok{background:var(--ok-soft);color:var(--ok);border-color:color-mix(in srgb,var(--ok) 25%,transparent)}
+.pill.warn{background:var(--warn-soft);color:var(--warn);border-color:color-mix(in srgb,var(--warn) 25%,transparent)}
+.pill.bad{background:var(--bad-soft);color:var(--bad);border-color:color-mix(in srgb,var(--bad) 25%,transparent)}
+.pill.info{background:var(--info-soft);color:var(--info);border-color:color-mix(in srgb,var(--info) 25%,transparent)}
+.pill.neutral{background:var(--card2);color:var(--muted);border-color:var(--line)}
+.pill.btn-like{cursor:pointer;transition:.15s}
+.pill.btn-like:hover{transform:translateY(-1px)}
+
+/* checklist groups */
+.cl-group{margin-bottom:14px}
+.cl-group .gh{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+.cl-group .gh .nm{font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:15px}
+.cl-group .gh .ct{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--muted);background:var(--card2);border:1px solid var(--line);border-radius:999px;padding:1px 8px}
+.cl-group .gh .gtrack{flex:1;height:7px;border-radius:999px;background:var(--card2);overflow:hidden;border:1px solid var(--line)}
+.cl-group .gh .gtrack .gf{height:100%;background:linear-gradient(90deg,var(--teal),var(--ok))}
+.cl-item{display:grid;grid-template-columns:auto 1fr auto;gap:12px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:var(--r-sm);padding:11px 13px;margin-bottom:7px;transition:.15s}
+.cl-item:hover{border-color:var(--line2)}
+.cl-item.done{opacity:.62}
+.cl-item .cb{width:24px;height:24px;border-radius:7px;border:2px solid var(--line2);background:var(--card2);cursor:pointer;display:flex;align-items:center;justify-content:center;flex:none;transition:.15s;padding:0}
+.cl-item .cb:hover{border-color:var(--teal)}
+.cl-item.done .cb{background:var(--ok);border-color:var(--ok);color:#fff}
+.cl-item .cb .ic{width:14px;height:14px;opacity:0}
+.cl-item.done .cb .ic{opacity:1}
+.cl-item .txt .t{font-weight:600;font-size:13.5px}
+.cl-item.done .txt .t{text-decoration:line-through;text-decoration-color:var(--faint)}
+.cl-item .txt .n{color:var(--muted);font-size:12px;margin-top:2px}
+.cl-item .due{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:12px;color:var(--ink2);text-align:right}
+.cl-item .due small{display:block;color:var(--faint);font-size:10px}
+
+/* tables */
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:var(--r-sm)}
+table{width:100%;border-collapse:collapse;min-width:680px;background:var(--card)}
+th,td{padding:11px 12px;border-bottom:1px solid var(--line);text-align:left;font-size:13px}
+th{background:var(--card2);color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.05em;font-weight:700;position:sticky;top:0;cursor:pointer;user-select:none;white-space:nowrap}
+th:hover{color:var(--ink)}
+th .sortarrow{opacity:.4;font-size:10px}
+th.sorted .sortarrow{opacity:1;color:var(--teal-d)}
+tbody tr{transition:.12s} tbody tr:hover{background:var(--card2)}
+tbody tr:last-child td{border-bottom:0}
+td.num{text-align:right;font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-variant-numeric:tabular-nums}
+td .lead2{font-weight:600} td .sub{color:var(--muted);font-size:11.5px;margin-top:2px}
+td:last-child{width:1%;white-space:nowrap}
+tfoot td{background:var(--card2);font-weight:700;border-top:2px solid var(--line2)}
+.linkbtn{border:0;background:transparent;color:var(--teal-d);font-weight:600;cursor:pointer;font-size:13px;padding:4px 6px;border-radius:7px}
+.linkbtn:hover{background:var(--teal-soft)}
+
+/* cost plan settings */
+.set-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
+.set-card{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px}
+.set-card .ch{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:11px}
+.set-card .ch .nm{font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px}
+.set-card .ch .tot{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-weight:500;color:var(--gold);font-size:14px}
+.set-card .inputs{display:grid;grid-template-columns:repeat(2,1fr);gap:9px}
+.set-card label{display:grid;gap:4px;font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.set-card .mini{display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--muted)}
+.set-card .mini b{color:var(--ink2);font-weight:500}
+
+/* dining */
+.dine-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
+.dine{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:15px;box-shadow:var(--shadow-sm);transition:.15s;position:relative;overflow:hidden}
+.dine:hover{box-shadow:var(--shadow);border-color:var(--line2)}
+.dine .rank{position:absolute;right:-10px;top:-14px;font-family:Georgia,"Times New Roman",serif;font-weight:900;font-size:62px;color:var(--card2);line-height:1;user-select:none}
+.dine h3{font-family:Georgia,"Times New Roman",serif;font-size:17px;font-weight:700;position:relative}
+.dine .best{color:var(--clay-d);font-weight:600;font-size:12.5px;margin-top:3px;position:relative}
+.dine .cuisine{display:inline-block;margin-top:9px;font-size:11.5px;font-weight:600;color:var(--teal-d);background:var(--teal-soft);border-radius:999px;padding:3px 10px;position:relative}
+.dine p{color:var(--muted);font-size:13px;margin-top:10px;line-height:1.5;position:relative}
+.dine .facts{display:grid;gap:6px;margin-top:11px;position:relative}
+.dine .facts .f{display:grid;grid-template-columns:18px 1fr;gap:8px;font-size:12.5px;color:var(--ink2);align-items:start}
+.dine .facts .f .ic{width:15px;height:15px;color:var(--faint);margin-top:2px}
+.callout{background:var(--gold-soft);border:1px solid color-mix(in srgb,var(--gold) 35%,transparent);border-radius:var(--r-sm);padding:14px;display:flex;gap:11px;align-items:flex-start;margin-top:14px}
+.callout .ic{width:20px;height:20px;color:var(--gold);flex:none;margin-top:1px}
+.callout .t{font-size:13.5px;line-height:1.55;color:var(--ink2)}
+
+/* sources */
+.src-list{display:grid;gap:9px}
+.src{display:grid;grid-template-columns:1fr auto;gap:12px;background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:12px 14px;align-items:center}
+.src .si{font-weight:600;font-size:13.5px}
+.src .sd{color:var(--muted);font-size:12px;margin-top:3px}
+.src .su{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11.5px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-align:right}
+
+/* map big */
+.routemap{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
+.routemap svg{display:block;width:100%;height:auto}
+.legend{display:flex;gap:16px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid var(--line);background:var(--card2)}
+.legend .l{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--ink2)}
+.legend .l .sw{width:11px;height:11px;border-radius:3px}
+.dist-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:16px}
+.dist{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px}
+.dist .v{font-family:Georgia,"Times New Roman",serif;font-weight:800;font-size:24px}
+.dist .k{color:var(--muted);font-size:11.5px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-top:5px}
+
+.legline{display:grid;gap:8px;margin-top:14px}
+.leg{display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center;background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:10px 13px;cursor:pointer;transition:.15s}
+.leg:hover{border-color:var(--teal);transform:translateX(2px)}
+.leg .ld{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--teal-d)}
+.leg .ln{font-weight:600;font-size:13px} .leg .ls{color:var(--muted);font-size:11.5px;margin-top:2px}
+.leg .lk{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:12.5px;text-align:right;color:var(--ink2)}
+
+/* data tools */
+.tools{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px}
+.tool{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px}
+.tool h4{font-family:Georgia,"Times New Roman",serif;font-size:14.5px;margin-bottom:6px;display:flex;align-items:center;gap:7px}
+.tool h4 .ic{width:15px;height:15px;color:var(--teal-d)}
+.tool p{color:var(--muted);font-size:12.5px;line-height:1.5}
+.tool code{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:1px 6px;font-size:11.5px}
+pre{margin:0;background:#0f1620;color:#cfe3ff;border-radius:var(--r-sm);padding:15px;overflow:auto;font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;max-height:380px;border:1px solid #1d2735}
+
+/* ===================== MODAL ===================== */
+dialog{border:0;padding:0;background:transparent;width:min(720px,calc(100% - 26px));color:var(--ink)}
+dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
+.modal{background:var(--card);border:1px solid var(--line);border-radius:var(--r-lg);box-shadow:0 40px 100px -30px rgba(0,0,0,.6);overflow:hidden;animation:rise .25s ease}
+.modal-head{padding:18px 20px;border-bottom:1px solid var(--line);background:var(--card2);display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.modal-head .eb{color:var(--clay-d);font-size:11px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}
+.modal-head h3{font-family:Georgia,"Times New Roman",serif;font-size:21px;font-weight:700;margin-top:3px}
+.modal-fields{padding:18px 20px;display:grid;grid-template-columns:repeat(2,1fr);gap:13px;max-height:62vh;overflow:auto}
+.modal-fields label{display:grid;gap:5px;font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+.modal-fields label.wide{grid-column:1/-1}
+.modal-foot{padding:14px 20px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:center;background:var(--card2)}
+.modal-foot .spacer{flex:1}
+.icon-close{border:0;background:var(--card);border-radius:10px;width:34px;height:34px;cursor:pointer;font-size:20px;line-height:1;color:var(--muted);border:1px solid var(--line)}
+.icon-close:hover{color:var(--ink);border-color:var(--line2)}
+
+/* toast */
+#toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--paper);
+  padding:11px 18px;border-radius:12px;font-weight:600;font-size:13.5px;box-shadow:0 18px 40px -16px rgba(0,0,0,.6);
+  opacity:0;pointer-events:none;transition:.3s;z-index:200;display:flex;align-items:center;gap:9px;max-width:90vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast .ic{width:17px;height:17px;color:var(--teal)}
+
+.footer-note{text-align:center;color:var(--faint);font-size:12px;margin-top:30px}
+
+/* ===================== RESPONSIVE ===================== */
+@media (max-width:1080px){
+  .hero{grid-template-columns:1fr}
+  .kpis{grid-template-columns:repeat(3,1fr)}
+  .grid-2,.grid-2b,.set-grid,.dine-grid{grid-template-columns:1fr}
+  .next-grid,.rings,.dist-grid{grid-template-columns:1fr}
+  .command-row{grid-template-columns:1fr}
+}
+@media (max-width:640px){
+  .shell{width:calc(100% - 20px);padding-top:18px}
+  .kpis{grid-template-columns:repeat(2,1fr)}
+  .item{grid-template-columns:1fr;gap:11px}
+  .item .side{justify-items:start}
+  .bar-row{grid-template-columns:1fr;gap:5px}
+  .amt{text-align:left}
+  .modal-fields{grid-template-columns:1fr}
+  .tabs{position:static}
+  .leg{grid-template-columns:1fr;gap:5px}
+  .src{grid-template-columns:1fr} .src .su{text-align:left;max-width:100%}
+}
+@media print{
+  body{background:#fff}
+  .top-actions,.command,.tabs,.entry-quick,dialog,.icon-btn,#toast,.btn{display:none!important}
+  .pane{display:block!important;break-inside:avoid;page-break-inside:avoid}
+  .panel,.item,.kpi{box-shadow:none}
+  .shell{width:100%}
+}
+</style>
+</head>
+<body>
+<main class="shell">
+  <header class="topbar">
+    <div class="brand">
+      <div class="kicker"><span class="dot"></span> Bintaro → Bali · 12–20 Jun 2026</div>
+      <h1 class="serif">Expedition <em>Command&nbsp;Center</em></h1>
+      <p class="lead" id="brandLead">Offline-first planner for the family road trip — itinerary, route map, stays, checklist, a smart cost plan, and a unit-aware TJ/EK settlement engine.</p>
+    </div>
+    <div class="top-actions">
+      <span class="sync-pill" id="syncState"><span class="led"></span> Seed loaded</span>
+      <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme"></button>
+      <button class="btn ghost" id="printBtn">Print</button>
+      <button class="btn ghost" id="exportBtn">Export</button>
+      <label class="btn ghost file-btn">Import<input id="importInput" type="file" accept="application/json"></label>
+      <button class="btn danger" id="resetBtn">Reset</button>
+    </div>
+  </header>
+
+  <section class="hero" id="hero"></section>
+  <section class="kpis" id="kpis"></section>
+
+  <section class="command">
+    <div class="command-row">
+      <label class="field"><span>Search everything</span>
+        <span class="search-wrap">
+          <svg class="si" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="search" placeholder="hotel, ferry, Ubud, diesel, pending task…">
+        </span>
+      </label>
+      <label class="field"><span>Status</span><select id="statusFilter"></select></label>
+      <label class="field"><span>Category</span><select id="categoryFilter"></select></label>
+    </div>
+  </section>
+
+  <nav class="tabs" id="tabs" role="tablist"></nav>
+
+  <section class="pane active" id="pane-dashboard"></section>
+  <section class="pane" id="pane-itinerary"></section>
+  <section class="pane" id="pane-map"></section>
+  <section class="pane" id="pane-stays"></section>
+  <section class="pane" id="pane-checklist"></section>
+  <section class="pane" id="pane-expenses"></section>
+  <section class="pane" id="pane-plan"></section>
+  <section class="pane" id="pane-dining"></section>
+  <section class="pane" id="pane-data"></section>
+
+  <p class="footer-note">RTBALI · data stays in your browser (localStorage). Export to back up or commit. Built for offline use.</p>
+</main>
+
+<dialog id="dialog">
+  <form method="dialog" class="modal" id="editForm">
+    <div class="modal-head">
+      <div><div class="eb" id="modalEb">Edit</div><h3 class="serif" id="modalTitle">Record</h3></div>
+      <button class="icon-close" type="button" id="closeBtn" aria-label="Close">×</button>
+    </div>
+    <div class="modal-fields" id="modalFields"></div>
+    <div class="modal-foot">
+      <button class="btn danger" type="button" id="deleteBtn">Delete</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" type="button" id="cancelBtn">Cancel</button>
+      <button class="btn primary" id="saveBtn" value="default">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toast"></div>
+
+<script id="seed-data" type="application/json">{"version": 1, "metadata": {"title": "Bintaro to Bali Road Trip", "subtitle": "Offline-first trip, accommodation, checklist, and cost dashboard", "sourceWorkbook": "Bintaro_to_Bali_Cost_Tracker_v5.xlsx", "updatedAt": "2026-05-28", "changeNote": "Intermediate overnight removed; following route/accommodation dates moved up; Lovina and Kintamani marked confirmed changed.", "detailPlanNote": "Fuel, toll, ferry, and hotel detail settings mirror the detailed Excel planning sheets and are editable in the app."}, "settings": {"currency": "IDR", "tjSplitUnits": 2.5, "ekSplitUnits": 2.5, "bufferRate": 0.1}, "lists": {"categories": ["Fuel/Diesel", "Toll/e-Money", "Ferry", "Hotel", "Food & Drinks", "Activity/Tickets", "Parking", "Necessities", "Other", "Cost Details"], "payers": ["TJ", "EK", "TBD"], "payments": ["Cash", "Debit/Credit", "QRIS", "Transfer", "e-Money", "Online"], "splits": ["Shared by Units", "Equal 50/50", "TJ only", "EK only", "Custom"], "statuses": ["Not started", "In progress", "Need booking", "Need decision", "Booked", "Confirmed", "Done"]}, "tripPlans": [{"id": "trip-001", "date": "2026-06-12", "day": "Fri", "overnight": "Surabaya", "route": "Bintaro -> Semarang rest area -> Surabaya", "timing": "Depart 04:00-04:30 WIB; arrive Surabaya 19:00-21:00", "mainPlan": "Long transit day. Friday prayer near Semarang, then continue to Surabaya and check in.", "drivingPlan": "Use Trans-Java toll. Main stop: Rest Area KM 379A near Semarang for Jumatan. Second stop around KM 597A / KM 626A before Surabaya.", "mealsRest": "Jumatan around Semarang; lunch after prayer; light dinner after check-in.", "bookingStatus": "Confirmed", "actionNeeded": "Keep updated voucher/offline proof; no extra room action needed."}, {"id": "trip-003", "date": "2026-06-13", "day": "Sat", "overnight": "Lovina", "route": "Surabaya -> Ketapang ferry -> Gilimanuk -> Lovina", "timing": "Depart Surabaya early; target Lovina late afternoon/evening WITA", "mainPlan": "Removed intermediate overnight. Move as a long direct transfer to Lovina with ferry buffer.", "drivingPlan": "Use steady pace via Probolinggo/Situbondo/Ketapang. Keep diesel above half tank and allow ferry queue buffer.", "mealsRest": "Breakfast in Surabaya; lunch en route; dinner in Lovina.", "bookingStatus": "Confirmed - changed", "actionNeeded": "Lovina stay moved up. Confirm revised arrival date with property."}, {"id": "trip-004", "date": "2026-06-14", "day": "Sun", "overnight": "Kintamani", "route": "Lovina -> Kintamani", "timing": "Dolphin trip 08:30 WITA; finish 13:00-14:00; depart Lovina directly 14:15-14:45; arrive Kintamani 17:15-18:30", "mainPlan": "Fixed dolphin trip in Lovina Beach. Check out before the trip and keep luggage secured in the Fortuner. After the trip, quick meal/dry clothes, then direct drive to Kintamani.", "drivingPlan": "Mountain route after a sea activity day; avoid rushing. Use engine braking on descents and keep diesel above half tank.", "mealsRest": "Light breakfast before trip; snack pack/water on boat; quick lunch in Lovina or on the way before Kintamani.", "bookingStatus": "Confirmed - changed", "actionNeeded": "Kintamani stay moved up one night. Confirm revised arrival date/late arrival."}, {"id": "trip-005", "date": "2026-06-15", "day": "Mon", "overnight": "Ubud", "route": "Kintamani -> Penglipuran Village -> Ubud", "timing": "Depart 09:30-10:00 WITA; Penglipuran 10:45-12:15; arrive Ubud 14:30-15:30", "mainPlan": "Check out from Kintamani, visit Penglipuran Village for cultural walk/photos, lunch nearby, then continue to Ubud. Easy evening at Ubud center.", "drivingPlan": "Short scenic drive via Bangli/Penglipuran. Keep luggage in the Fortuner and park in an official/public parking area.", "mealsRest": "Breakfast in Kintamani; lunch around Penglipuran/Bangli; dinner in Ubud.", "bookingStatus": "Need booking", "actionNeeded": "Book Ubud for 2 nights; check hotel parking and easy access for Fortuner."}, {"id": "trip-006", "date": "2026-06-16", "day": "Tue", "overnight": "Ubud", "route": "Ubud + Bali Zoo", "timing": "Depart 08:30 WITA; zoo 09:00-13:00/14:00", "mainPlan": "Bali Zoo day for the child; optional Tegenungan/Sukawati or return to Ubud for rest.", "drivingPlan": "Minimal driving; keep afternoon flexible.", "mealsRest": "Lunch near Bali Zoo or Sukawati; dinner in Ubud.", "bookingStatus": "Need booking", "actionNeeded": "Buy/check Bali Zoo tickets and opening hours closer to date."}, {"id": "trip-007", "date": "2026-06-17", "day": "Wed", "overnight": "Nusa Dua / Jimbaran / Uluwatu", "route": "Ubud -> South Bali -> Uluwatu", "timing": "Depart 09:00 WITA; Uluwatu 16:00-19:30", "mainPlan": "Move to South Bali. Uluwatu temple sunset and Kecak dance in the evening.", "drivingPlan": "Traffic can be heavy toward South Bali; avoid peak-hour rush if possible.", "mealsRest": "Lunch after check-in; dinner around Jimbaran/Uluwatu.", "bookingStatus": "Need booking", "actionNeeded": "Book 1 night in Nusa Dua/Jimbaran/Uluwatu area with parking."}, {"id": "trip-008", "date": "2026-06-18", "day": "Thu", "overnight": "Seminyak/Canggu or West Bali", "route": "South Bali -> Friday prayer plan -> Seminyak/Canggu or West Bali", "timing": "Flexible move day; decide fun stay vs easier return position", "mainPlan": "Choose Plan A: Seminyak/Canggu for fun, or Plan B: West Bali for easier 19 Jun return.", "drivingPlan": "If prioritizing easy return, move toward Medewi/Negara/Gilimanuk instead of staying Canggu.", "mealsRest": "Lunch after check-out; sunset dinner if choosing Seminyak/Canggu.", "bookingStatus": "Need decision", "actionNeeded": "Choose Plan A or Plan B after checking traffic/driver fatigue."}, {"id": "trip-009", "date": "2026-06-19", "day": "Fri", "overnight": "Solo / Surakarta", "route": "Bali -> Gilimanuk ferry -> Ketapang -> Solo", "timing": "Depart 04:30-05:00 WITA; arrive Solo 21:00-23:00 WIB", "mainPlan": "Hardest driving day. Keep stops short but regular. Rotate drivers if possible.", "drivingPlan": "Target Gilimanuk early; ferry buffer; then Ketapang-Situbondo-Probolinggo-Surabaya toll-Solo.", "mealsRest": "Simple breakfast pack; lunch after Ketapang; dinner around toll/rest area.", "bookingStatus": "Need booking", "actionNeeded": "Book Solo/Surakarta hotel with secure parking and late check-in."}, {"id": "trip-010", "date": "2026-06-20", "day": "Sat", "overnight": "Home", "route": "Solo / Surakarta -> Bintaro", "timing": "Depart 08:00-09:00 WIB; arrive evening", "mainPlan": "Final homebound day. Optional Solo breakfast before departure.", "drivingPlan": "Trans-Java toll. Stop around Semarang/Batang and Cipali area.", "mealsRest": "Breakfast in Solo; lunch en route; dinner at home or toll stop.", "bookingStatus": "No hotel needed", "actionNeeded": "Check toll/e-money balance; keep child snacks and rest stops planned."}], "accommodations": [{"id": "stay-001", "date": "2026-06-12", "night": "12 Jun", "area": "Surabaya", "property": "PanaHouse Surabaya", "address": "Jl. Gayung Kebonsari No. 61-65 Ketintang, Gayungan, Surabaya", "roomsGuests": "2 rooms / 4 adults + 1 child (adjusted by user)", "checkInOut": "Check-in 14:00-23:59; check-out 12:00", "status": "Confirmed", "contact": "+62 851 7109 0002", "note": "Hotel capacity adjusted to 2 rooms. Keep updated proof/voucher offline."}, {"id": "stay-003", "date": "2026-06-13", "night": "13 Jun", "area": "Lovina", "property": "Lovina Life Room & Cafe", "address": "Jalan Raya Seririt - Singaraja, Desa Kaliasem, Lovina Beach, Bali 81152", "roomsGuests": "2 rooms / 4 adults + 1 child (adjusted by user)", "checkInOut": "Arrival 14 Jun; departure 15 Jun", "status": "Confirmed - changed", "contact": "+62 823 4007 4348", "note": "Arrival moved up; reconfirm date with Lovina Life Room & Cafe."}, {"id": "stay-004", "date": "2026-06-14", "night": "14 Jun", "area": "Kintamani", "property": "Inap Luxury Cabin Kintamani", "address": "Jl. Pendakian Gn. Batur, Batur Tengah, Kintamani, Bali 80652", "roomsGuests": "2 rooms / 4 adults + 1 child (adjusted by user)", "checkInOut": "Arrival 15 Jun; departure 16 Jun", "status": "Confirmed - changed", "contact": "+62 878 6114 9009", "note": "Arrival moved up one night; reconfirm revised date and late arrival."}, {"id": "stay-005", "date": "2026-06-15", "night": "15-16 Jun", "area": "Ubud", "property": "To book", "address": "Ubud area", "roomsGuests": "Recommended: 2 rooms / 4 adults + 1 child", "checkInOut": "2 nights", "status": "Need booking", "contact": "", "note": "Moved up to 15-17 Jun; book 2 nights with parking."}, {"id": "stay-006", "date": "2026-06-17", "night": "17 Jun", "area": "Nusa Dua / Jimbaran / Uluwatu", "property": "To book", "address": "South Bali", "roomsGuests": "Recommended: 2 rooms / 4 adults + 1 child", "checkInOut": "1 night", "status": "Need booking", "contact": "", "note": "Moved up to 17 Jun; book 1 night with parking."}, {"id": "stay-007", "date": "2026-06-18", "night": "18 Jun", "area": "Seminyak/Canggu or West Bali", "property": "To decide", "address": "Option A: Seminyak/Canggu; Option B: Medewi/Negara/Gilimanuk", "roomsGuests": "Recommended: 2 rooms / 4 adults + 1 child", "checkInOut": "1 night", "status": "Need decision", "contact": "", "note": "Moved up to 18 Jun; decide fun stay vs easier return."}, {"id": "stay-008", "date": "2026-06-19", "night": "19 Jun", "area": "Solo / Surakarta", "property": "To book", "address": "Solo / Surakarta", "roomsGuests": "Recommended: 2 rooms / 4 adults + 1 child", "checkInOut": "1 night", "status": "Need booking", "contact": "", "note": "Moved up to 19 Jun; book secure parking and late check-in."}], "checklist": [{"id": "task-001", "category": "Booking", "task": "Keep updated proof for PanaHouse Surabaya 2-room adjustment", "owner": "", "due": "2026-06-05", "status": "Done", "notes": "User confirms hotels adjusted to 2 rooms."}, {"id": "task-003", "category": "Booking", "task": "Keep Lovina Life Room & Cafe voucher/proof for 14 Jun", "owner": "", "due": "2026-06-08", "status": "Done", "notes": "No late checkout needed. Check out before dolphin trip; keep luggage secured in the car, then drive directly to Kintamani after the trip."}, {"id": "task-004", "category": "Booking", "task": "Keep updated proof for Inap Luxury Cabin Kintamani 2-room adjustment", "owner": "", "due": "2026-06-08", "status": "Done", "notes": "User confirms hotels adjusted to 2 rooms; confirm late arrival after Lovina."}, {"id": "task-005", "category": "Booking", "task": "Book Ubud hotel for 16-18 Jun", "owner": "", "due": "2026-06-08", "status": "Not started", "notes": "2 nights; parking important."}, {"id": "task-006", "category": "Booking", "task": "Book South Bali hotel for 18 Jun", "owner": "", "due": "2026-06-09", "status": "Not started", "notes": "Nusa Dua/Jimbaran/Uluwatu."}, {"id": "task-007", "category": "Booking", "task": "Decide 19 Jun: Seminyak/Canggu vs West Bali", "owner": "", "due": "2026-06-09", "status": "Not started", "notes": "West Bali is safer for return drive."}, {"id": "task-008", "category": "Booking", "task": "Book Solo hotel for 20 Jun", "owner": "", "due": "2026-06-10", "status": "Not started", "notes": "Late check-in and secure parking."}, {"id": "task-009", "category": "Transport", "task": "Buy Ketapang-Gilimanuk ferry ticket", "owner": "", "due": "2026-06-11", "status": "Not started", "notes": "Use Ferizy; check passengers and vehicle plate."}, {"id": "task-010", "category": "Transport", "task": "Buy/prepare return ferry plan Gilimanuk-Ketapang", "owner": "", "due": "2026-06-18", "status": "Not started", "notes": "Target early ferry 20 Jun."}, {"id": "task-011", "category": "Vehicle", "task": "Service/check Fortuner: oil, coolant, brake, tires, spare tire", "owner": "", "due": "2026-06-10", "status": "Not started", "notes": "Important before mountain/coastal routes."}, {"id": "task-012", "category": "Vehicle", "task": "Prepare e-money/toll balance", "owner": "", "due": "2026-06-11", "status": "Not started", "notes": "Have backup cards."}, {"id": "task-013", "category": "Vehicle", "task": "Prepare diesel plan and top-up points", "owner": "", "due": "2026-06-11", "status": "Not started", "notes": "Start full; refill before long legs."}, {"id": "task-014", "category": "Family", "task": "Prepare child snacks, medicine, wet wipes, power bank", "owner": "", "due": "2026-06-11", "status": "Not started", "notes": "Keep in cabin, not buried in luggage."}, {"id": "task-015", "category": "Documents", "task": "Print/save hotel vouchers, IDs, vehicle registration, driver licenses", "owner": "", "due": "2026-06-11", "status": "Not started", "notes": "Keep offline copy."}, {"id": "task-016", "category": "Food", "task": "Choose Lovina arrival restaurant before check-in", "owner": "", "due": "2026-06-14", "status": "Not started", "notes": "Recommended: Lesehan La Luna on-route, Warung Apple, Warung Ayu, Warung Dolphin, or Buda Bakery."}], "expenses": [{"id": "exp-001", "date": "2026-06-12", "place": "Before departure", "category": "Fuel/Diesel", "description": "Diesel top-up before departure", "vendor": "SPBU", "payer": "TJ", "payment": "Cash", "amount": 0, "split": "Shared by Units", "buffer": "Yes", "notes": ""}, {"id": "exp-002", "date": "2026-06-12", "place": "Trans-Java toll", "category": "Toll/e-Money", "description": "Toll card top-up / toll expense", "vendor": "e-Money", "payer": "EK", "payment": "e-Money", "amount": 0, "split": "Shared by Units", "buffer": "Yes", "notes": ""}, {"id": "exp-003", "date": "2026-06-14", "place": "Lovina", "category": "Food & Drinks", "description": "Lunch/early dinner before check-in", "vendor": "Choose from Lovina Restaurants", "payer": "TBD", "payment": "Cash", "amount": 0, "split": "Shared by Units", "buffer": "Yes", "notes": ""}, {"id": "exp-004", "date": "2026-06-15", "place": "Lovina Beach", "category": "Activity/Tickets", "description": "Dolphin trip 08:30, finish 13:00-14:00", "vendor": "Dolphin operator", "payer": "TBD", "payment": "Cash", "amount": 0, "split": "Shared by Units", "buffer": "Yes", "notes": ""}, {"id": "exp-005", "date": "2026-06-16", "place": "Penglipuran Village", "category": "Activity/Tickets", "description": "Penglipuran Village tickets/parking", "vendor": "Penglipuran", "payer": "TBD", "payment": "Cash", "amount": 0, "split": "Shared by Units", "buffer": "Yes", "notes": ""}, {"id": "exp-006", "date": "2026-06-17", "place": "Bali Zoo", "category": "Activity/Tickets", "description": "Bali Zoo tickets/parking", "vendor": "Bali Zoo", "payer": "TBD", "payment": "Online", "amount": 0, "split": "Shared by Units", "buffer": "Yes", "notes": ""}, {"id": "exp-007", "date": "2026-06-20", "place": "Gilimanuk/Ketapang", "category": "Ferry", "description": "Return ferry", "vendor": "Ferizy/ASDP", "payer": "TBD", "payment": "Online", "amount": 0, "split": "Shared by Units", "buffer": "Yes", "notes": ""}], "budget": [{"id": "budget-001", "date": "2026-06-12", "route": "Bintaro -> Semarang -> Surabaya", "category": "Fuel/Diesel", "item": "Total estimated diesel from Fuel & Toll Plan", "amount": 0, "status": "Planned", "notes": "Formula pulls total fuel plan."}, {"id": "budget-002", "date": "2026-06-12", "route": "Bintaro -> Surabaya", "category": "Toll/e-Money", "item": "Trans-Java toll estimate", "amount": 0, "status": "Planned", "notes": "Fill actual estimate or link from toll plan."}, {"id": "budget-003", "date": "2026-06-14", "route": "Ketapang -> Gilimanuk", "category": "Ferry", "item": "Outbound ferry car + passengers", "amount": 0, "status": "Planned", "notes": "Fill after Ferizy booking."}, {"id": "budget-004", "date": "2026-06-14", "route": "Lovina arrival", "category": "Food & Drinks", "item": "Lovina local restaurant before check-in", "amount": 0, "status": "Planned", "notes": "Options listed in Lovina Restaurants sheet."}, {"id": "budget-005", "date": "2026-06-15", "route": "Lovina Beach", "category": "Activity/Tickets", "item": "Dolphin trip 08:30, finish 13:00-14:00", "amount": 0, "status": "Booked", "notes": "Fill agreed tour price."}, {"id": "budget-006", "date": "2026-06-16", "route": "Kintamani -> Penglipuran -> Ubud", "category": "Activity/Tickets", "item": "Penglipuran Village tickets + parking", "amount": 0, "status": "Planned", "notes": "Fill current ticket/parking costs."}, {"id": "budget-007", "date": "2026-06-17", "route": "Ubud / Bali Zoo", "category": "Activity/Tickets", "item": "Bali Zoo tickets + parking", "amount": 0, "status": "Planned", "notes": "Fill once tickets are chosen."}, {"id": "budget-008", "date": "2026-06-18", "route": "South Bali / Uluwatu", "category": "Activity/Tickets", "item": "Uluwatu / Kecak / parking", "amount": 0, "status": "Planned", "notes": "Fill after confirming plan."}, {"id": "budget-009", "date": "2026-06-20", "route": "Bali -> Solo", "category": "Ferry", "item": "Return ferry Gilimanuk -> Ketapang", "amount": 0, "status": "Planned", "notes": "Fill after Ferizy booking."}, {"id": "budget-010", "date": "2026-06-20", "route": "Bali -> Solo", "category": "Toll/e-Money", "item": "East Java -> Central Java toll estimate", "amount": 0, "status": "Planned", "notes": "Fill or link from toll plan."}, {"id": "budget-011", "date": "2026-06-21", "route": "Solo -> Bintaro", "category": "Toll/e-Money", "item": "Return toll estimate", "amount": 0, "status": "Planned", "notes": "Fill actual/estimate."}], "restaurants": [{"no": 1, "name": "Lesehan La Luna", "bestFor": "Best on-route stop from Gilimanuk before central Lovina", "cuisine": "Ikan bakar / grilled fish", "why": "Good if everyone is hungry before reaching the hotel; local seafood, casual lesehan style.", "hours": "Listed 12:00-21:00; suitable for late lunch/early dinner.", "address": "Jl. Singaraja-Gilimanuk, Banyupoh, Gerokgak, Buleleng", "contact": "+62 812-1618-645; on main west-north Bali road", "url": "https://lesehan-la-luna.menustic.com/"}, {"no": 2, "name": "Warung Apple", "bestFor": "Best central Lovina local-food pick", "cuisine": "Indonesian + seafood", "why": "Popular local warung for nasi campur, seafood, and family-friendly casual meal.", "hours": "Listed daily 10:00-22:00.", "address": "Jl. Mawar / Kalibukbuk-Lovina area", "contact": "+62 813-3496-1799", "url": "https://www.baliholidaysecrets.com/warung-apple-lovina/"}, {"no": 3, "name": "Warung Ayu Food & Drink", "bestFor": "Best simple Balinese/Indonesian meal in Lovina", "cuisine": "Balinese, Indonesian, Asian", "why": "Local warung option; good for nasi campur, grilled fish, and Indonesian dishes.", "hours": "Check current hours by phone before arrival.", "address": "Jalan Mawar Lovina, Kalibukbuk", "contact": "+62 821-4755-5034", "url": "https://visitnorthbali.bulelengkab.go.id/informasi/detail?kode=340104&slug=warung-ayu-food-and-drink"}, {"no": 4, "name": "Warung Dolphin", "bestFor": "Best beachfront seafood vibe", "cuisine": "Boat-fresh seafood / local warung", "why": "Small local beachfront restaurant across Banyualit beach; good if you want Lovina atmosphere immediately.", "hours": "Check current hours before arrival.", "address": "Banyualit Beach / Anturan-Lovina area", "contact": "Tripadvisor notes local owners and beachfront setting", "url": "https://www.tripadvisor.com.au/Restaurant_Review-g1600236-d1179843-Reviews-Warung_Dolphin-Anturan_Lovina_Beach_Buleleng_District_Buleleng_Regency_Bali.html"}, {"no": 5, "name": "Buda Bakery & Resto", "bestFor": "Best child-safe comfort-food backup", "cuisine": "Bakery, Asian, European", "why": "Good if the child wants pastry/bread/simple meals after the ferry; safer backup if warung options feel too heavy.", "hours": "Tripadvisor lists it as open and suitable for brunch/lunch/dinner; recheck hours.", "address": "Kalibukbuk/Lovina area; BTN Graha Lovina/Jalan Damai area", "contact": "+62 812-4692-779 per Visit North Bali listing", "url": "https://visitnorthbali.bulelengkab.go.id/informasi/detail?kode=340104&slug=buda-bakery-and-resto"}, {"no": 6, "name": "Jaring Kitchen & Drinks", "bestFor": "Best clean family-style option with parking/highchair notes", "cuisine": "Comfort food, local/international mix", "why": "Good family backup; review listings mention off-street parking, highchairs and reservations.", "hours": "Instagram/search listings indicate open for breakfast/lunch/dinner; recheck current hours.", "address": "Jl. Damai No.25, Anturan, Lovina", "contact": "Consider booking/WhatsApp if arriving late", "url": "https://www.tripadvisor.com/Restaurant_Review-g1600236-d13946988-Reviews-Jaring_Kitchen_Drinks-Anturan_Lovina_Beach_Buleleng_District_Buleleng_Regency_Bali.html"}], "sources": [{"Source Item": "PanaHouse Surabaya voucher", "Details Used": "Check-in 12 Jun, check-out 13 Jun, 1 room / 2 guests, address/contact", "Source / URL": "User-uploaded PDF: Hotel E-Voucher - Order ID 1348879100.pdf"}, {"Source Item": "Inap Luxury Cabin Kintamani voucher", "Details Used": "Arrival 15 Jun, departure 16 Jun, 2 rooms / 4 adults / 0 children, address/contact", "Source / URL": "User-uploaded PDF: Confirmation_for_Booking_ID_#_2016724304.pdf"}, {"Source Item": "JM Transjawa Rest Area KM 379A", "Details Used": "Chosen as Friday prayer and rest target near Semarang", "Source / URL": "https://www.jmtransjawatol.co.id/id/layanan/rest-area/379A"}, {"Source Item": "Ferizy / ASDP", "Details Used": "Ferry ticket planning; reservation and check-in rules may change", "Source / URL": "https://www.ferizy.com/"}, {"Source Item": "Bali Zoo", "Details Used": "Activity timing should be rechecked before travel", "Source / URL": "https://www.bali-zoo.com/"}, {"Source Item": "Warung Apple Lovina", "Details Used": "Restaurant location/hours/cuisine used in Lovina shortlist", "Source / URL": "https://www.baliholidaysecrets.com/warung-apple-lovina/"}, {"Source Item": "Warung Ayu Food and Drink", "Details Used": "Local Indonesian/Asian restaurant contact/address", "Source / URL": "https://visitnorthbali.bulelengkab.go.id/informasi/detail?kode=340104&slug=warung-ayu-food-and-drink"}, {"Source Item": "Warung Dolphin", "Details Used": "Beachfront local seafood restaurant notes", "Source / URL": "https://www.tripadvisor.com.au/Restaurant_Review-g1600236-d1179843-Reviews-Warung_Dolphin-Anturan_Lovina_Beach_Buleleng_District_Buleleng_Regency_Bali.html"}, {"Source Item": "Buda Bakery and Resto", "Details Used": "Family-friendly backup restaurant contact/address", "Source / URL": "https://visitnorthbali.bulelengkab.go.id/informasi/detail?kode=340104&slug=buda-bakery-and-resto"}, {"Source Item": "Lesehan La Luna", "Details Used": "On-route ikan bakar stop before Lovina", "Source / URL": "https://lesehan-la-luna.menustic.com/"}, {"Source Item": "Jaring Kitchen & Drinks", "Details Used": "Family-style backup restaurant listing", "Source / URL": "https://www.tripadvisor.com/Restaurant_Review-g1600236-d13946988-Reviews-Jaring_Kitchen_Drinks-Anturan_Lovina_Beach_Buleleng_District_Buleleng_Regency_Bali.html"}, {"Source Item": "Lovina Life Room & Cafe voucher", "Details Used": "Arrival 14 Jun, departure 15 Jun, 2 rooms / 4 adults / 0 children in voucher, address/contact, parking and express check-in benefits", "Source / URL": "User-uploaded PDF: Confirmation_for_Booking_ID_#_2016565193.pdf"}, {"Source Item": "User update", "Details Used": "Lovina dolphin trip at 08:30 finishing around 13:00-14:00; no late checkout needed; drive directly to Kintamani; hotels adjusted to 2 rooms", "Source / URL": "Conversation update, 28 May 2026"}], "categorySettings": {"Fuel/Diesel": {"enabled": true, "buffer": "Yes", "bufferRate": 0.3, "kmPerLiter": 9, "dieselPrice": 6800, "defaultPayer": "TJ", "split": "Shared by Units"}, "Toll/e-Money": {"enabled": true, "buffer": "Yes", "bufferRate": 0.5, "defaultPayer": "TJ", "split": "Shared by Units"}, "Ferry": {"enabled": true, "buffer": "Yes", "bufferRate": 0.1, "defaultPayer": "TJ", "split": "Shared by Units"}, "Hotel": {"enabled": true, "buffer": "Yes", "bufferRate": 0.1, "defaultPayer": "TJ", "split": "Shared by Units"}}, "categoryDetails": [{"id": "detail-fuel-001", "category": "Fuel/Diesel", "date": "2026-06-12", "location": "Bintaro → Semarang (Trans-Java)", "detail": "467 km estimated", "km": 467, "liters": 51.9, "unitPrice": 6800, "baseAmount": 352920, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Start full diesel tank; Jumatan/rest near Semarang."}, {"id": "detail-toll-001", "category": "Toll/e-Money", "date": "2026-06-12", "location": "Bintaro → Semarang (Trans-Java)", "detail": "Toll / e-money estimate", "method": "e-Money", "baseAmount": 350000, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Start full diesel tank; Jumatan/rest near Semarang."}, {"id": "detail-fuel-002", "category": "Fuel/Diesel", "date": "2026-06-12", "location": "Semarang → Surabaya (Trans-Java)", "detail": "303 km estimated", "km": 303, "liters": 33.7, "unitPrice": 6800, "baseAmount": 229160, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Second long toll leg into Surabaya."}, {"id": "detail-toll-002", "category": "Toll/e-Money", "date": "2026-06-12", "location": "Semarang → Surabaya (Trans-Java)", "detail": "Toll / e-money estimate", "method": "e-Money", "baseAmount": 250000, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Second long toll leg into Surabaya."}, {"id": "detail-fuel-003", "category": "Fuel/Diesel", "date": "2026-06-13", "location": "Surabaya → Ketapang / Gilimanuk → Lovina", "detail": "432 km estimated", "km": 432, "liters": 48.0, "unitPrice": 6800, "baseAmount": 326400, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Long direct transfer after removing intermediate overnight; include ferry buffer."}, {"id": "detail-toll-003", "category": "Toll/e-Money", "date": "2026-06-13", "location": "Surabaya → Ketapang / Gilimanuk → Lovina", "detail": "Toll / e-money estimate", "method": "e-Money", "baseAmount": 180000, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Long direct transfer after removing intermediate overnight; include ferry buffer."}, {"id": "detail-ferry-003", "category": "Ferry", "date": "2026-06-13", "location": "Ketapang → Gilimanuk", "detail": "Car + passengers", "operator": "ASDP/Ferizy", "baseAmount": 335000, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Long direct transfer after removing intermediate overnight; include ferry buffer."}, {"id": "detail-fuel-004", "category": "Fuel/Diesel", "date": "2026-06-14", "location": "Lovina → Kintamani", "detail": "81 km estimated", "km": 81, "liters": 9.0, "unitPrice": 6800, "baseAmount": 61200, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Mountain route after dolphin activity."}, {"id": "detail-fuel-005", "category": "Fuel/Diesel", "date": "2026-06-15", "location": "Kintamani → Penglipuran → Ubud", "detail": "48 km estimated", "km": 48, "liters": 5.3, "unitPrice": 6800, "baseAmount": 36040, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Short scenic transfer."}, {"id": "detail-fuel-006", "category": "Fuel/Diesel", "date": "2026-06-16", "location": "Ubud local (Bali Zoo)", "detail": "30 km estimated", "km": 30, "liters": 3.3, "unitPrice": 6800, "baseAmount": 22440, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Local family activity day."}, {"id": "detail-fuel-007", "category": "Fuel/Diesel", "date": "2026-06-17", "location": "Ubud → South Bali / Uluwatu", "detail": "55 km estimated", "km": 55, "liters": 6.1, "unitPrice": 6800, "baseAmount": 41480, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Traffic buffer toward South Bali."}, {"id": "detail-fuel-008", "category": "Fuel/Diesel", "date": "2026-06-18", "location": "South Bali → Seminyak/Canggu or West Bali", "detail": "110 km estimated", "km": 110, "liters": 12.2, "unitPrice": 6800, "baseAmount": 82960, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Decision day: fun stay vs easier return position."}, {"id": "detail-fuel-009", "category": "Fuel/Diesel", "date": "2026-06-19", "location": "Bali → Gilimanuk ferry → Ketapang → Solo", "detail": "406 km estimated", "km": 406, "liters": 45.1, "unitPrice": 6800, "baseAmount": 306680, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Hardest return leg; ferry and East/Central Java toll."}, {"id": "detail-toll-009", "category": "Toll/e-Money", "date": "2026-06-19", "location": "Bali → Gilimanuk ferry → Ketapang → Solo", "detail": "Toll / e-money estimate", "method": "e-Money", "baseAmount": 320000, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Hardest return leg; ferry and East/Central Java toll."}, {"id": "detail-ferry-009", "category": "Ferry", "date": "2026-06-19", "location": "Gilimanuk → Ketapang", "detail": "Car + passengers", "operator": "ASDP/Ferizy", "baseAmount": 335000, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Hardest return leg; ferry and East/Central Java toll."}, {"id": "detail-fuel-010", "category": "Fuel/Diesel", "date": "2026-06-20", "location": "Solo → Bintaro (Trans-Java)", "detail": "500 km estimated", "km": 500, "liters": 55.6, "unitPrice": 6800, "baseAmount": 378080, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Final Trans-Java return leg."}, {"id": "detail-toll-010", "category": "Toll/e-Money", "date": "2026-06-20", "location": "Solo → Bintaro (Trans-Java)", "detail": "Toll / e-money estimate", "method": "e-Money", "baseAmount": 380000, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Final Trans-Java return leg."}, {"id": "detail-hotel-001", "category": "Hotel", "date": "2026-06-12", "location": "Surabaya", "detail": "PanaHouse Surabaya", "baseAmount": 0, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Hotel capacity adjusted to 2 rooms. Keep updated proof/voucher offline."}, {"id": "detail-hotel-002", "category": "Hotel", "date": "2026-06-13", "location": "Lovina", "detail": "Lovina Life Room & Cafe", "baseAmount": 0, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Arrival moved up; reconfirm date with Lovina Life Room & Cafe."}, {"id": "detail-hotel-003", "category": "Hotel", "date": "2026-06-14", "location": "Kintamani", "detail": "Inap Luxury Cabin Kintamani", "baseAmount": 0, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Arrival moved up one night; reconfirm revised date and late arrival."}, {"id": "detail-hotel-004", "category": "Hotel", "date": "2026-06-15", "location": "Ubud", "detail": "To book", "baseAmount": 0, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Moved up to 15-17 Jun; book 2 nights with parking."}, {"id": "detail-hotel-005", "category": "Hotel", "date": "2026-06-17", "location": "Nusa Dua / Jimbaran / Uluwatu", "detail": "To book", "baseAmount": 0, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Moved up to 17 Jun; book 1 night with parking."}, {"id": "detail-hotel-006", "category": "Hotel", "date": "2026-06-18", "location": "Seminyak/Canggu or West Bali", "detail": "To decide", "baseAmount": 0, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Moved up to 18 Jun; decide fun stay vs easier return."}, {"id": "detail-hotel-007", "category": "Hotel", "date": "2026-06-19", "location": "Solo / Surakarta", "detail": "To book", "baseAmount": 0, "buffer": "Yes", "payer": "TJ", "split": "Shared by Units", "reimbursable": "Yes", "notes": "Moved up to 19 Jun; book secure parking and late check-in."}], "restaurantNote": "My recommendation: on 14 Jun arrival, eat before checking in at Lovina Life Room & Cafe if rooms are not ready. Choose Lesehan La Luna if hungry on the Gilimanuk-Lovina road; choose Warung Apple or Warung Ayu if you prefer to reach central Lovina first."}</script>
+<script>
+/* ============================================================
+   RTBALI — Expedition Command Center
+   Offline-first. Single-file. No external runtime deps.
+   ============================================================ */
+"use strict";
+
+/* ---------- constants ---------- */
+const STORAGE_KEY = "rtbaliDbV3";
+const THEME_KEY = "rtbaliTheme";
+const fmt = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
+const fmtN = new Intl.NumberFormat("id-ID");
+const $ = (id) => document.getElementById(id);
+const el = (sel, root = document) => root.querySelector(sel);
+
+if ("serviceWorker" in navigator && location.protocol !== "file:") {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {});
+  });
+}
+
+/* crash-proof storage: localStorage throws on file:// "opaque origins"
+   and in some privacy modes. Never let that abort startup. */
+const store = {
+  ok: true,
+  get(k){ try { return localStorage.getItem(k); } catch(_) { this.ok = false; return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); return true; } catch(_) { this.ok = false; return false; } },
+  remove(k){ try { localStorage.removeItem(k); } catch(_) { this.ok = false; } }
+};
+
+/* ---------- tiny SVG icon set ---------- */
+const ICONS = {
+  dashboard: 'M3 13h8V3H3zM13 21h8V3h-8zM3 21h8v-6H3z',
+  route: 'M6 19a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 13V8a3 3 0 0 1 3-3h9M18 11v5a3 3 0 0 1-3 3H6',
+  bed: 'M3 7v11M3 13h18v5M21 13v-2a3 3 0 0 0-3-3H8M3 11V7',
+  check: 'M20 6 9 17l-5-5',
+  wallet: 'M19 7H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zM16 13h.01M3 9V7a2 2 0 0 1 2-2h11',
+  calc: 'M4 3h16v18H4zM8 7h8M8 11h2M14 11h2M8 15h2M14 15h2M8 19h8',
+  fork: 'M4 3v7a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V3M6 12v9M15 3c-1.5 1-2 3-2 5s.5 4 2 5v8',
+  db: 'M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6',
+  flag: 'M4 21V4M4 4c3-2 7 2 10 0s4 0 6-1v9c-2 1-3 2-6 1S7 11 4 13',
+  bolt: 'M13 2 4 14h7l-1 8 9-12h-7z',
+  clock: 'M12 7v5l3 2M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z',
+  pin: 'M12 21s7-6.5 7-12a7 7 0 1 0-14 0c0 5.5 7 12 7 12zM12 11a2 2 0 1 0 0-4 2 2 0 0 0 0 4z',
+  car: 'M5 16h14M6 16l1.5-5a2 2 0 0 1 2-1.5h5a2 2 0 0 1 2 1.5L20 16M5 16v3M19 16v3M7.5 13h9',
+  ship: 'M3 18l2-7h14l2 7M12 4v7M5 11V8h14v3M4 18c1 1.5 2 1.5 3 0s2-1.5 3 0 2 1.5 3 0 2-1.5 3 0',
+  fuel: 'M3 21V5a2 2 0 0 1 2-2h6a2 2 0 0 1 2 2v16M3 12h10M15 8l3 3v6a2 2 0 0 1-4 0M18 11h-3',
+  coins: 'M9 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM15 22a6 6 0 0 0 0-12M6 9h6',
+  download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
+  upload: 'M12 21V9M7 14l5-5 5 5M5 3h14',
+  reset: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
+  printer: 'M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M6 14h12v7H6z',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3',
+  sun: 'M12 4V2M12 22v-2M4 12H2M22 12h-2M6 6 4.5 4.5M19.5 19.5 18 18M18 6l1.5-1.5M4.5 19.5 6 18M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z',
+  moon: 'M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z',
+  plus: 'M12 5v14M5 12h14',
+  phone: 'M5 4h4l2 5-3 2a11 11 0 0 0 5 5l2-3 5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2z',
+  link: 'M10 13a5 5 0 0 0 7 0l3-3a5 5 0 0 0-7-7l-1 1M14 11a5 5 0 0 0-7 0l-3 3a5 5 0 0 0 7 7l1-1',
+  star: 'M12 3l2.7 5.5 6 .9-4.3 4.2 1 6L12 17l-5.4 2.6 1-6L3.3 9.4l6-.9z',
+  alert: 'M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z',
+  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  doc: 'M14 3v5h5M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z',
+  globe: 'M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM3 12h18M12 3a14 14 0 0 1 0 18 14 14 0 0 1 0-18z',
+  cal: 'M8 3v4M16 3v4M3 9h18M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z'
+};
+function icon(name, cls = "ic") {
+  const d = ICONS[name] || "";
+  return `<svg class="${cls}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${d}"/></svg>`;
+}
+
+/* ---------- editor schemas ---------- */
+const schemas = {
+  trip: { title: "Itinerary Day", collection: "tripPlans", fields: [
+    ["date","Date","date"],["day","Weekday"],["overnight","Overnight base"],["route","Route","textarea"],
+    ["timing","Timing","textarea"],["mainPlan","Main plan","textarea"],["drivingPlan","Driving / ferry plan","textarea"],
+    ["mealsRest","Meals / prayer / rest","textarea"],["bookingStatus","Status","select:statuses"],["actionNeeded","Action needed","textarea"]
+  ]},
+  accommodation: { title: "Accommodation", collection: "accommodations", fields: [
+    ["date","Date","date"],["night","Night label"],["area","Area"],["property","Property"],["address","Address","textarea"],
+    ["roomsGuests","Rooms / guests"],["checkInOut","Check-in / out"],["status","Status","select:statuses"],["contact","Contact"],["note","Note","textarea"]
+  ]},
+  checklist: { title: "Checklist Task", collection: "checklist", fields: [
+    ["task","Task","textarea"],["category","Category"],["owner","Owner"],["due","Due","date"],
+    ["status","Status","select:statuses"],["notes","Notes","textarea"]
+  ]},
+  expense: { title: "Expense", collection: "expenses", fields: [
+    ["date","Date","date"],["place","Route / place"],["category","Category","select:categories"],["description","Description"],
+    ["vendor","Vendor"],["payer","Payer","select:payers"],["payment","Payment","select:payments"],["amount","Amount (IDR)","number"],
+    ["split","Split","select:splits"],["notes","Notes","textarea"]
+  ]},
+  categoryDetail: { title: "Cost Plan Row", collection: "categoryDetails", fields: [
+    ["category","Category","select:detailCategories"],["date","Date","date"],["location","Segment / location"],
+    ["detail","Detail"],["km","Distance (km)","number"],["liters","Liters","number"],["unitPrice","Unit price","number"],
+    ["baseAmount","Base amount (IDR)","number"],["buffer","Buffer","select:yesno"],["payer","Payer","select:payers"],
+    ["split","Split","select:splits"],["reimbursable","Reimbursable","select:yesno"],["notes","Notes","textarea"]
+  ]}
+};
+
+const TABS = [
+  ["dashboard","Dashboard","dashboard"],
+  ["itinerary","Itinerary","route"],
+  ["map","Route Map","pin"],
+  ["stays","Stays","bed"],
+  ["checklist","Checklist","check"],
+  ["expenses","Expenses","wallet"],
+  ["plan","Cost Plan","calc"],
+  ["dining","Dining","fork"],
+  ["data","Data","db"]
+];
+
+/* route map node layout (schematic, west->east then back) */
+const MAP_STOPS = [
+  { key:"bintaro", label:"Bintaro", sub:"Start", x:60,  y:200, type:"start" },
+  { key:"semarang", label:"Semarang", sub:"Rest / Jumatan", x:300, y:150, type:"stop" },
+  { key:"surabaya", label:"Surabaya", sub:"Night 1", x:520, y:200, type:"overnight" },
+  { key:"ferry1", label:"Ketapang", sub:"Ferry ⇒ Gilimanuk", x:640, y:235, type:"ferry" },
+  { key:"lovina", label:"Lovina", sub:"Night 2", x:705, y:120, type:"overnight" },
+  { key:"kintamani", label:"Kintamani", sub:"Night 3", x:760, y:165, type:"overnight" },
+  { key:"ubud", label:"Ubud", sub:"Nights 4–5", x:770, y:225, type:"overnight" },
+  { key:"south", label:"Uluwatu", sub:"Night 6", x:775, y:300, type:"overnight" },
+  { key:"westbali", label:"West Bali", sub:"Night 7", x:690, y:290, type:"overnight" },
+  { key:"solo", label:"Solo", sub:"Night 8", x:330, y:265, type:"overnight" },
+  { key:"home", label:"Bintaro", sub:"Home", x:60, y:230, type:"end" }
+];
+
+/* ---------- state ---------- */
+let SEED = null, db = null, activeEdit = null;
+let sortState = {}; // per-table sort
+
+/* ---------- boot (invoked at end of file, after all declarations) ---------- */
+function init() {
+  if (init._done) return; init._done = true;
+  try { SEED = JSON.parse($("seed-data").textContent); }
+  catch (e) { SEED = {}; console.error("Seed parse failed", e); }
+  SEED = normalize(structuredClone(SEED));
+  db = loadLocal() || structuredClone(SEED);
+  db = normalize(db);
+  applyTheme(store.get(THEME_KEY) || "light");
+  buildTabs();
+  bindEvents();
+  if (db.metadata && db.metadata.subtitle) $("brandLead").textContent = db.metadata.subtitle + " — itinerary, route map, stays, checklist, cost plan and a unit-aware TJ/EK settlement engine.";
+  renderAll();
+}
+
+/* ---------- normalization (robustness) ---------- */
+function normalize(d) {
+  d = d && typeof d === "object" ? d : {};
+  d.version = d.version || 3;
+  d.metadata = d.metadata || {};
+  d.settings = Object.assign({ currency:"IDR", tjSplitUnits:2.5, ekSplitUnits:2.5, bufferRate:0.1, startDate:"" }, d.settings || {});
+  d.lists = d.lists || {};
+  d.lists.statuses = arr(d.lists.statuses, ["Not started","In progress","Need booking","Need decision","Booked","Confirmed","Done"]);
+  d.lists.categories = arr(d.lists.categories, ["Fuel/Diesel","Toll/e-Money","Ferry","Hotel","Food & Drinks","Activity/Tickets","Parking","Necessities","Other"]);
+  d.lists.payers = arr(d.lists.payers, ["TJ","EK","TBD"]);
+  d.lists.payments = arr(d.lists.payments, ["Cash","Debit/Credit","QRIS","Transfer","e-Money","Online"]);
+  d.lists.splits = arr(d.lists.splits, ["Shared by Units","Equal 50/50","TJ only","EK only","Custom"]);
+  ["tripPlans","accommodations","checklist","expenses","budget","categoryDetails","restaurants","sources"].forEach(k => { d[k] = Array.isArray(d[k]) ? d[k] : []; });
+  d.categorySettings = d.categorySettings || {};
+  // assign ids + coerce types defensively
+  d.tripPlans.forEach((r,i)=>{ r.id = r.id || `trip-${i}`; });
+  d.accommodations.forEach((r,i)=>{ r.id = r.id || `stay-${i}`; });
+  d.checklist.forEach((r,i)=>{ r.id = r.id || `task-${i}`; r.category = r.category || "General"; r.status = r.status || "Not started"; r.due = fixDate(r.due); });
+  d.expenses.forEach((r,i)=>{ r.id = r.id || `exp-${i}`; r.amount = num(r.amount); r.date = fixDate(r.date); });
+  d.categoryDetails.forEach((r,i)=>{ r.id = r.id || `det-${i}`; ["km","liters","unitPrice","baseAmount"].forEach(k=>{ if(r[k]!==undefined && r[k]!=="") r[k]=num(r[k]); }); r.date = fixDate(r.date); });
+  return d;
+}
+function arr(v, fallback){ return Array.isArray(v) && v.length ? v : fallback; }
+/* convert stray Excel serial dates to ISO */
+function fixDate(v){
+  if (v == null || v === "") return v;
+  const s = String(v).trim();
+  if (/^\d{4,5}$/.test(s)) { // excel serial
+    const n = parseInt(s,10);
+    const ms = (n - 25569) * 86400000;
+    const dt = new Date(ms);
+    if (!isNaN(dt)) return dt.toISOString().slice(0,10);
+  }
+  return s;
+}
+
+/* ---------- persistence ---------- */
+function loadLocal(){
+  try { const v = JSON.parse(store.get(STORAGE_KEY) || "null"); return (v && v.version) ? v : null; }
+  catch(_) { return null; }
+}
+function persist(){
+  db.metadata.updatedAt = new Date().toISOString();
+  const saved = store.set(STORAGE_KEY, JSON.stringify(db));
+  const p = $("syncState"); p.classList.add("dirty");
+  p.innerHTML = saved ? '<span class="led"></span> Local changes saved'
+                      : '<span class="led"></span> In memory (storage blocked — Export to keep)';
+}
+
+/* ---------- theme ---------- */
+function applyTheme(t){
+  document.documentElement.setAttribute("data-theme", t);
+  store.set(THEME_KEY, t);
+  $("themeBtn").innerHTML = icon(t === "dark" ? "sun" : "moon");
+}
+
+/* ---------- tabs / events ---------- */
+function buildTabs(){
+  $("tabs").innerHTML = TABS.map(([key,label,ic],i)=>
+    `<button class="tab ${i===0?"active":""}" data-tab="${key}" role="tab">${icon(ic)} ${label}<span class="badge" data-badge="${key}"></span></button>`
+  ).join("");
+}
+function bindEvents(){
+  $("tabs").addEventListener("click", e=>{ const t=e.target.closest(".tab"); if(t) setTab(t.dataset.tab); });
+  $("search").addEventListener("input", debounce(renderFiltered, 120));
+  $("statusFilter").addEventListener("change", renderFiltered);
+  $("categoryFilter").addEventListener("change", renderFiltered);
+  $("themeBtn").addEventListener("click", ()=> applyTheme(document.documentElement.getAttribute("data-theme")==="dark"?"light":"dark"));
+  $("printBtn").addEventListener("click", ()=>window.print());
+  $("exportBtn").addEventListener("click", exportDb);
+  $("importInput").addEventListener("change", importDb);
+  $("resetBtn").addEventListener("click", resetSeed);
+  $("editForm").addEventListener("submit", saveEditor);
+  $("closeBtn").addEventListener("click", ()=>$("dialog").close());
+  $("cancelBtn").addEventListener("click", ()=>$("dialog").close());
+  $("deleteBtn").addEventListener("click", deleteActive);
+  document.body.addEventListener("click", delegate);
+}
+function setTab(name){
+  document.querySelectorAll(".tab").forEach(t=>t.classList.toggle("active", t.dataset.tab===name));
+  document.querySelectorAll(".pane").forEach(p=>p.classList.remove("active"));
+  const pane = $("pane-"+name); if(pane) pane.classList.add("active");
+  window.scrollTo({top:0,behavior:"smooth"});
+}
+/* event delegation for data-action buttons */
+function delegate(e){
+  const a = e.target.closest("[data-act]"); if(!a) return;
+  const act = a.dataset.act;
+  if (act==="edit") openEditor(a.dataset.type, a.dataset.id);
+  else if (act==="add") openEditor(a.dataset.type);
+  else if (act==="cycle") cycleTask(a.dataset.id);
+  else if (act==="goto") setTab(a.dataset.tab);
+  else if (act==="sort") sortTable(a.dataset.table, a.dataset.key, a.dataset.numeric==="1");
+}
+
+/* ============================================================
+   RENDER ORCHESTRATION
+   ============================================================ */
+function renderAll(){
+  ensureFilters();
+  const steps = [renderHero,renderKpis,renderBadges,renderDashboard,renderItinerary,renderMap,
+    renderStays,renderChecklist,renderExpenses,renderPlan,renderDining,renderData];
+  steps.forEach(fn=>{ try { fn(); } catch(err){ console.error(fn.name, err); } });
+}
+/* lighter path on filter changes */
+function renderFiltered(){
+  renderDashboard(); renderItinerary(); renderStays(); renderChecklist(); renderExpenses();
+}
+function ensureFilters(){
+  if ($("statusFilter").dataset.ready) return;
+  fillSelect($("statusFilter"), ["",...db.lists.statuses], "All statuses");
+  fillSelect($("categoryFilter"), ["",...db.lists.categories], "All categories");
+  $("statusFilter").dataset.ready = "1";
+}
+function renderBadges(){
+  const counts = { dashboard:"", itinerary:db.tripPlans.length, map:MAP_STOPS.length, stays:db.accommodations.length,
+    checklist:db.checklist.filter(t=>!isDone(t)).length, expenses:db.expenses.length, plan:db.categoryDetails.length,
+    dining:db.restaurants.length, data:db.sources.length };
+  document.querySelectorAll("[data-badge]").forEach(b=>{ const v=counts[b.dataset.badge]; b.textContent = v||v===0?String(v):""; b.style.display = v||v===0?"":"none"; });
+}
+
+/* ============================================================
+   DASHBOARD
+   ============================================================ */
+function renderHero(){
+  const dates = db.tripPlans.map(t=>t.date).filter(Boolean).sort();
+  const start = db.settings.startDate || dates[0];
+  const end = dates[dates.length-1];
+  const days = (start && end) ? Math.round((new Date(end)-new Date(start))/86400000)+1 : db.tripPlans.length;
+  const today = new Date(); today.setHours(0,0,0,0);
+  let cdNum = "—", cdSub = "trip dates not set";
+  if (start){
+    const s = new Date(start); s.setHours(0,0,0,0);
+    const diff = Math.round((s-today)/86400000);
+    if (diff > 0){ cdNum = diff; cdSub = `days until departure · ${dateText(start)}`; }
+    else if (diff === 0){ cdNum = "0"; cdSub = "departure is today — drive safe!"; }
+    else if (end && new Date(end) >= today){ cdNum = "GO"; cdSub = "trip in progress"; }
+    else { cdNum = "✓"; cdSub = "trip complete"; }
+  }
+  const t = totals();
+  const plan = planTotals();
+  const km = fuelSummary().km;
+
+  $("hero").innerHTML = `
+    <div class="hero-card hero-left">
+      <div class="countdown">
+        <div class="lbl">${icon("clock","ic")&&""}Countdown</div>
+        <div class="big serif">${typeof cdNum==="number"?cdNum:cdNum}</div>
+        <div class="sub">${escapeHtml(cdSub)}</div>
+      </div>
+      <div class="hero-meta">
+        <div class="m"><div class="v serif">${days}</div><div class="k">Days</div></div>
+        <div class="m"><div class="v serif">${db.tripPlans.length}</div><div class="k">Legs</div></div>
+        <div class="m"><div class="v serif">${fmtN.format(km)}<span style="font-size:13px"> km</span></div><div class="k">Distance</div></div>
+        <div class="m"><div class="v serif">${confirmedStays().length}/${db.accommodations.length}</div><div class="k">Stays set</div></div>
+        <div class="m"><div class="v serif">${fmt.format(plan.withBuffer).replace(/\s/g,"")}</div><div class="k">Planned</div></div>
+      </div>
+    </div>
+    <div class="hero-card hero-right">
+      <div class="map-head"><h3 class="serif">Route at a glance</h3><span>tap a stop → map</span></div>
+      <div class="mini-map">${routeSvg(true)}</div>
+    </div>`;
+}
+
+function renderKpis(){
+  const t = totals();
+  const plan = planTotals();
+  const variance = t.actual - plan.withBuffer;
+  const doneTasks = db.checklist.filter(isDone).length;
+  const openTasks = db.checklist.length - doneTasks;
+  const data = [
+    ["clay","Planned cost", fmt.format(plan.withBuffer), `base ${fmt.format(plan.base)} + buffer`],
+    ["teal","Logged actual", fmt.format(t.actual), `${db.expenses.length} expense rows`],
+    [variance>0?"warn":"ok","Actual vs plan", (variance>0?"+":"")+fmt.format(variance), variance>0?"over plan":"within plan", variance>0?"pos":"neg"],
+    ["info","Settlement", t.transferLabel, t.transferSub],
+    ["gold","Stays", `${confirmedStays().length}/${db.accommodations.length}`, `${db.accommodations.filter(needsBooking).length} need action`],
+    [openTasks?"warn":"ok","Checklist", `${doneTasks}/${db.checklist.length}`, `${openTasks} open task${openTasks===1?"":"s"}`]
+  ];
+  $("kpis").innerHTML = data.map(([cls,k,v,s,vc])=>
+    `<div class="kpi ${cls}"><div class="accent"></div><div class="k">${k}</div><div class="v ${vc||""}">${v}</div><div class="s">${escapeHtml(s)}</div></div>`
+  ).join("");
+}
+
+function renderDashboard(){
+  const t = totals();
+  const plan = planTotals();
+  // spending by category (actual) merged with plan
+  const cats = new Set([...Object.keys(t.byCategory), ...Object.keys(plan.byCategory)]);
+  const rows = [...cats].map(c=>({c, actual:t.byCategory[c]||0, plan:(plan.byCategory[c]||{withBuffer:0}).withBuffer}))
+    .sort((a,b)=> (b.plan+b.actual)-(a.plan+a.actual));
+  const max = Math.max(1, ...rows.map(r=>Math.max(r.actual,r.plan)));
+  const swatch = c => COLORMAP[c] || "var(--faint)";
+  const chart = rows.length ? rows.map(r=>{
+    const showActual = r.actual>0;
+    const w = (v)=>Math.max(v>0?4:0, v/max*100);
+    return `<div class="bar-row">
+      <div class="nm"><span class="sw" style="background:${swatch(r.c)}"></span>${escapeHtml(r.c)}</div>
+      <div class="track" title="Plan ${fmt.format(r.plan)}${showActual?" · Actual "+fmt.format(r.actual):""}">
+        <div class="fill" style="width:${w(showActual?r.actual:r.plan)}%;background:${showActual?"linear-gradient(90deg,var(--clay),var(--gold))":"linear-gradient(90deg,var(--teal),var(--teal-d))"}"></div>
+      </div>
+      <div class="amt">${fmt.format(showActual?r.actual:r.plan)}</div>
+    </div>`;
+  }).join("") : empty("No cost categories yet.","wallet");
+
+  $("pane-dashboard").innerHTML = `
+    <div class="grid-2">
+      <div class="panel">
+        <div class="sec-head"><h2 class="serif">${icon("wallet")} Spending by category</h2>
+          <span class="meta">teal = planned · clay = logged actual</span></div>
+        <div class="bars">${chart}</div>
+      </div>
+      <div class="panel">
+        <div class="sec-head"><h2 class="serif">${icon("coins")} Settlement</h2><span class="meta">TJ / EK</span></div>
+        ${settlementHtml(t)}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("bolt")} Next actions</h2><span class="meta">what needs attention now</span></div>
+      ${nextActionsHtml()}
+    </div>
+    <div class="grid-2b">
+      <div class="panel">
+        <div class="sec-head"><h2 class="serif">${icon("check")} Progress</h2></div>
+        <div class="rings">
+          ${ring("Bookings", confirmedStays().length, db.accommodations.length, "var(--teal)")}
+          ${ring("Checklist", db.checklist.filter(isDone).length, db.checklist.length, "var(--gold)")}
+          ${ring("Days linked", linkedTripDays().length, db.tripPlans.length, "var(--clay)")}
+        </div>
+      </div>
+      <div class="panel">
+        <div class="sec-head"><h2 class="serif">${icon("calc")} Planned cost by day</h2><span class="meta">with buffer</span></div>
+        ${dailyPlanHtml()}
+      </div>
+    </div>`;
+}
+
+function dailyPlanHtml(){
+  const byDate = {};
+  db.categoryDetails.forEach(r=>{ const c=calcDetail(r); byDate[r.date||"—"]=(byDate[r.date||"—"]||0)+c.total; });
+  const rows = Object.entries(byDate).sort((a,b)=>String(a[0]).localeCompare(String(b[0])));
+  if(!rows.length) return empty("No cost plan rows yet.","calc");
+  const max = Math.max(1,...rows.map(r=>r[1]));
+  return `<div class="bars">`+rows.map(([d,v])=>
+    `<div class="bar-row"><div class="nm">${dateText(d)}</div>
+      <div class="track tall"><div class="fill" style="width:${Math.max(4,v/max*100)}%"></div></div>
+      <div class="amt">${fmt.format(v)}</div></div>`).join("")+`</div>`;
+}
+
+function ring(label, value, total, color){
+  const pct = total ? Math.round(value/total*100) : 0;
+  const r=42, c=2*Math.PI*r, off=c-(pct/100)*c;
+  return `<div class="ring-card">
+    <div class="ring">
+      <svg width="96" height="96" viewBox="0 0 96 96">
+        <circle cx="48" cy="48" r="${r}" fill="none" stroke="var(--line)" stroke-width="9"/>
+        <circle cx="48" cy="48" r="${r}" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round"
+          stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${off.toFixed(1)}" style="transition:stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1)"/>
+      </svg>
+      <div class="pc">${pct}%</div>
+    </div>
+    <div class="rl">${label}</div><div class="rs">${value} of ${total}</div>
+  </div>`;
+}
+
+function nextActionsHtml(){
+  const openTasks = db.checklist.filter(t=>!isDone(t))
+    .sort((a,b)=>String(a.due||"~").localeCompare(String(b.due||"~"))).slice(0,5);
+  const needStay = db.accommodations.filter(needsBooking)
+    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))).slice(0,5);
+  const decisions = db.tripPlans.filter(t=>/need decision/i.test(t.bookingStatus||""))
+    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))).slice(0,5);
+  const block = (title,ic,items) => `<div class="next-card"><div class="h">${icon(ic)} ${title}</div>${
+    items.length ? `<ul>${items.join("")}</ul>` : `<div class="none">Nothing pending — nice.</div>`}</div>`;
+  return `<div class="next-grid">
+    ${block("Open checklist","check", openTasks.map(t=>`<li><span class="d">${t.due?dateText(t.due):"—"}</span><span>${escapeHtml(t.task)}</span></li>`))}
+    ${block("Stays to lock in","bed", needStay.map(a=>`<li><span class="d">${a.date?dateText(a.date):"—"}</span><span>${escapeHtml(a.area)} · ${escapeHtml(a.status||a.property)}</span></li>`))}
+    ${block("Decisions","alert", decisions.map(t=>`<li><span class="d">${t.date?dateText(t.date):"—"}</span><span>${escapeHtml(t.overnight||t.route)}</span></li>`))}
+  </div>`;
+}
+
+/* ============================================================
+   SETTLEMENT ENGINE (unit-aware, split-type-aware)
+   ============================================================ */
+function totals(){
+  const s = db.settings;
+  const tjU = num(s.tjSplitUnits)||1, ekU = num(s.ekSplitUnits)||1, totU = tjU+ekU;
+  let actual=0, tjPaid=0, ekPaid=0, tjOwes=0, ekOwes=0, pending=0;
+  const byCategory={};
+  db.expenses.forEach(e=>{
+    const a = num(e.amount); if(!a) return;
+    actual += a;
+    byCategory[e.category||"Other"] = (byCategory[e.category||"Other"]||0)+a;
+    // who paid
+    if (e.payer==="TJ") tjPaid+=a; else if (e.payer==="EK") ekPaid+=a; else { pending+=a; }
+    // who owes (split)
+    let tjShare=0.5, ekShare=0.5;
+    switch(e.split){
+      case "TJ only": tjShare=1; ekShare=0; break;
+      case "EK only": tjShare=0; ekShare=1; break;
+      case "Equal 50/50": tjShare=0.5; ekShare=0.5; break;
+      case "Shared by Units": default: tjShare=tjU/totU; ekShare=ekU/totU; break;
+    }
+    tjOwes += a*tjShare; ekOwes += a*ekShare;
+  });
+  const tjNet = tjPaid - tjOwes;   // >0 means TJ overpaid
+  let transferLabel, transferSub;
+  if (actual===0){ transferLabel="—"; transferSub="no amounts logged yet"; }
+  else if (Math.abs(tjNet) < 500){ transferLabel="Settled"; transferSub="no transfer needed"; }
+  else if (tjNet > 0){ transferLabel="EK → TJ"; transferSub=fmt.format(Math.round(tjNet)); }
+  else { transferLabel="TJ → EK"; transferSub=fmt.format(Math.round(Math.abs(tjNet))); }
+  return { actual, tjPaid, ekPaid, tjOwes, ekOwes, tjNet, pending, byCategory, transferLabel, transferSub, tjU, ekU };
+}
+function settlementHtml(t){
+  if (t.actual===0){
+    return `<div class="settle"><div class="empty" style="padding:22px">${icon("coins")} No expenses logged yet.<br><small>Add amounts in <b>Expenses</b> to compute the TJ/EK split.</small></div>
+      <p class="note">Split basis: ${t.tjU}/${t.ekU} units · expenses can be split per row (units, 50/50, or one party only).</p></div>`;
+  }
+  const settled = Math.abs(t.tjNet) < 500;
+  const verdict = settled
+    ? `<div class="verdict"><div>${icon("check")}</div><div>Balanced — no transfer needed.</div></div>`
+    : t.tjNet>0
+      ? `<div class="verdict pay"><div>${icon("coins")}</div><div><b>EK reimburses TJ ${fmt.format(Math.round(t.tjNet))}</b></div></div>`
+      : `<div class="verdict pay"><div>${icon("coins")}</div><div><b>TJ reimburses EK ${fmt.format(Math.round(Math.abs(t.tjNet)))}</b></div></div>`;
+  const line = (k,v)=>`<div class="line"><span>${k}</span><strong class="v">${fmt.format(Math.round(v))}</strong></div>`;
+  return `<div class="settle">
+    ${line("TJ paid", t.tjPaid)}
+    ${line("EK paid", t.ekPaid)}
+    ${line("TJ fair share", t.tjOwes)}
+    ${line("EK fair share", t.ekOwes)}
+    ${t.pending>0?line("Pending (payer TBD)", t.pending):""}
+    ${verdict}
+    <p class="note">Shares use ${t.tjU}/${t.ekU} units by default, overridden per expense by its split type.</p>
+  </div>`;
+}
+
+/* ============================================================
+   COST PLAN ENGINE
+   ============================================================ */
+function detailSetting(cat){
+  db.categorySettings ||= {};
+  db.categorySettings[cat] ||= { enabled:true, buffer:"Yes", bufferRate:0.1, defaultPayer:"TJ", split:"Shared by Units" };
+  return db.categorySettings[cat];
+}
+function detailCategories(){
+  return [...new Set([...db.categoryDetails.map(r=>r.category), "Fuel/Diesel","Toll/e-Money","Ferry","Hotel"])].filter(Boolean);
+}
+function calcDetail(row){
+  const s = detailSetting(row.category);
+  let base;
+  if (row.category==="Fuel/Diesel" && num(row.km) && !num(row.baseAmount)){
+    base = Math.round((num(row.km)/(num(s.kmPerLiter)||9)) * (num(s.dieselPrice)||num(row.unitPrice)||6800));
+  } else base = num(row.baseAmount);
+  const useBuffer = (row.buffer || s.buffer) === "Yes";
+  const rate = num(s.bufferRate)||0;
+  const bufferAmt = useBuffer ? Math.round(base*rate) : 0;
+  return { base, bufferAmt, total: base+bufferAmt };
+}
+function planTotals(){
+  const out = { base:0, withBuffer:0, byCategory:{} };
+  db.categoryDetails.forEach(r=>{
+    const c = calcDetail(r);
+    out.base += c.base; out.withBuffer += c.total;
+    out.byCategory[r.category] ||= { base:0, withBuffer:0 };
+    out.byCategory[r.category].base += c.base;
+    out.byCategory[r.category].withBuffer += c.total;
+  });
+  return out;
+}
+function recalcFuel(){
+  const s = detailSetting("Fuel/Diesel");
+  db.categoryDetails.filter(r=>r.category==="Fuel/Diesel").forEach(r=>{
+    if (num(r.km)){
+      r.liters = Math.round((num(r.km)/(num(s.kmPerLiter)||9))*10)/10;
+      r.unitPrice = num(s.dieselPrice)||6800;
+      r.baseAmount = Math.round(num(r.liters)*num(r.unitPrice));
+    }
+  });
+}
+function fuelSummary(){
+  let km=0, liters=0, cost=0;
+  db.categoryDetails.filter(r=>r.category==="Fuel/Diesel").forEach(r=>{ km+=num(r.km); liters+=num(r.liters); cost+=calcDetail(r).total; });
+  return { km, liters, cost };
+}
+
+function renderPlan(){
+  db.categoryDetails ||= [];
+  const plan = planTotals();
+  const cats = detailCategories();
+  const fuel = fuelSummary();
+  $("pane-plan").innerHTML = `
+    <div class="panel">
+      <div class="sec-head">
+        <h2 class="serif">${icon("calc")} Cost plan engine</h2>
+        <div class="right">
+          <span class="meta">base ${fmt.format(plan.base)} · with buffer <b>${fmt.format(plan.withBuffer)}</b></span>
+          <button class="btn primary" data-act="add" data-type="categoryDetail">${icon("plus")} Add row</button>
+        </div>
+      </div>
+      <div class="dist-grid">
+        <div class="dist"><div class="v">${fmtN.format(fuel.km)}<span style="font-size:13px"> km</span></div><div class="k">Planned distance</div></div>
+        <div class="dist"><div class="v">${fmtN.format(Math.round(fuel.liters))}<span style="font-size:13px"> L</span></div><div class="k">Est. diesel</div></div>
+        <div class="dist"><div class="v" style="font-size:20px">${fmt.format(fuel.cost)}</div><div class="k">Fuel cost (w/ buffer)</div></div>
+        <div class="dist"><div class="v" style="font-size:20px">${fmt.format(plan.withBuffer)}</div><div class="k">Grand total</div></div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("bolt")} Category settings</h2><span class="meta">edit assumptions — fuel auto-recalculates</span></div>
+      <div class="set-grid">${cats.map(cat=>settingCard(cat, plan.byCategory[cat])).join("")}</div>
+    </div>
+    ${cats.map(cat=>detailSection(cat, plan.byCategory[cat])).join("")}`;
+  document.querySelectorAll("[data-setting]").forEach(inp=>inp.addEventListener("change", onSettingChange));
+}
+function settingCard(cat, tot={base:0,withBuffer:0}){
+  const s = detailSetting(cat);
+  const fuelInputs = cat==="Fuel/Diesel"
+    ? `<label>km / liter<input data-setting="${escapeAttr(cat)}" data-key="kmPerLiter" type="number" step="0.1" value="${num(s.kmPerLiter)||9}"></label>
+       <label>Diesel price<input data-setting="${escapeAttr(cat)}" data-key="dieselPrice" type="number" value="${num(s.dieselPrice)||6800}"></label>` : "";
+  return `<div class="set-card">
+    <div class="ch"><div class="nm"><span class="sw" style="width:10px;height:10px;border-radius:3px;background:${COLORMAP[cat]||"var(--faint)"}"></span>${escapeHtml(cat)}</div><div class="tot">${fmt.format(tot.withBuffer||0)}</div></div>
+    <div class="inputs">
+      ${fuelInputs}
+      <label>Buffer<select data-setting="${escapeAttr(cat)}" data-key="buffer"><option ${s.buffer==="Yes"?"selected":""}>Yes</option><option ${s.buffer==="No"?"selected":""}>No</option></select></label>
+      <label>Buffer rate<input data-setting="${escapeAttr(cat)}" data-key="bufferRate" type="number" step="0.05" value="${num(s.bufferRate)??0.1}"></label>
+      <label>Default payer<select data-setting="${escapeAttr(cat)}" data-key="defaultPayer">${db.lists.payers.map(p=>`<option ${p===s.defaultPayer?"selected":""}>${p}</option>`).join("")}</select></label>
+      <label>Split<select data-setting="${escapeAttr(cat)}" data-key="split">${db.lists.splits.map(p=>`<option ${p===s.split?"selected":""}>${p}</option>`).join("")}</select></label>
+    </div>
+    <div class="mini"><span>Base <b>${fmt.format(tot.base||0)}</b></span><span>Buffer <b>${fmt.format((tot.withBuffer||0)-(tot.base||0))}</b></span></div>
+  </div>`;
+}
+function detailSection(cat, tot={base:0,withBuffer:0}){
+  const rows = applyFilter(db.categoryDetails.filter(r=>r.category===cat), "categoryDetail");
+  const sorted = sortRows(rows, "cd-"+cat);
+  const body = sorted.length ? sorted.map(r=>{
+    const c = calcDetail(r);
+    return `<tr>
+      <td>${dateText(r.date)}</td>
+      <td><div class="lead2">${escapeHtml(r.location||"—")}</div><div class="sub">${escapeHtml(detailSub(r))}</div></td>
+      <td class="num">${fmt.format(c.base)}</td>
+      <td class="num">${fmt.format(c.bufferAmt)}</td>
+      <td class="num"><b>${fmt.format(c.total)}</b></td>
+      <td>${escapeHtml(r.payer||detailSetting(cat).defaultPayer||"—")}</td>
+      <td><button class="linkbtn" data-act="edit" data-type="categoryDetail" data-id="${r.id}">Edit</button></td>
+    </tr>`;
+  }).join("") : `<tr><td colspan="7">${empty("No rows in this category.","calc")}</td></tr>`;
+  return `<div class="panel">
+    <div class="sec-head"><h2 class="serif"><span class="sw" style="width:11px;height:11px;border-radius:3px;background:${COLORMAP[cat]||"var(--faint)"}"></span> ${escapeHtml(cat)}</h2>
+      <span class="meta">${sorted.length} rows · ${fmt.format(tot.withBuffer||0)}</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr>
+        ${th("Date","date","cd-"+cat)}${th("Segment / detail","location","cd-"+cat)}${th("Base","__base","cd-"+cat,true)}
+        ${th("Buffer","__buf","cd-"+cat,true)}${th("Total","__total","cd-"+cat,true)}${th("Payer","payer","cd-"+cat)}<th></th>
+      </tr></thead>
+      <tbody>${body}</tbody>
+    </table></div>
+  </div>`;
+}
+function detailSub(r){
+  const b=[];
+  if(r.detail) b.push(r.detail);
+  if(num(r.km)) b.push(`${fmtN.format(num(r.km))} km`);
+  if(num(r.liters)) b.push(`${num(r.liters)} L`);
+  if(r.method) b.push(r.method);
+  if(r.operator) b.push(r.operator);
+  if(r.notes) b.push(r.notes);
+  return b.join(" · ");
+}
+function onSettingChange(e){
+  const cat=e.target.dataset.setting, key=e.target.dataset.key;
+  db.categorySettings[cat] ||= {};
+  db.categorySettings[cat][key] = e.target.type==="number" ? num(e.target.value) : e.target.value;
+  if (cat==="Fuel/Diesel" && (key==="kmPerLiter"||key==="dieselPrice")) recalcFuel();
+  persist(); renderAll();
+}
+
+/* ============================================================
+   ITINERARY
+   ============================================================ */
+function renderItinerary(){
+  const rows = applyFilter(db.tripPlans, "trip").slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  $("pane-itinerary").innerHTML = `
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("route")} Day-by-day itinerary</h2>
+        <div class="right"><span class="meta">${rows.length}/${db.tripPlans.length} shown</span>
+          <button class="btn primary" data-act="add" data-type="trip">${icon("plus")} Add day</button></div></div>
+      <div class="cards">${rows.length ? rows.map(tripCard).join("") : empty("No itinerary days match your filters.","route")}</div>
+    </div>`;
+}
+function tripCard(r){
+  const stay = stayForTrip(r);
+  const status = connectedStatus(r);
+  const cost = dayCost(r.date);
+  const stayLine = isHomeLeg(r) ? "No accommodation needed" : (stay ? `${stay.property} · ${stay.area}` : "Not linked");
+  const [dd,mm] = splitDate(r.date);
+  return `<article class="item">
+    <div class="date"><div class="d serif">${dd}</div><div class="m">${mm}</div><div class="dow">${escapeHtml(r.day||"")}</div></div>
+    <div class="body">
+      <h3 class="serif">${escapeHtml(r.overnight||r.route||"Day")}</h3>
+      <div class="route">${escapeHtml(r.route||"")}</div>
+      ${r.mainPlan?`<p>${escapeHtml(r.mainPlan)}</p>`:""}
+      <div class="tags">
+        ${r.timing?`<span class="chip">${icon("clock")} ${escapeHtml(firstClause(r.timing))}</span>`:""}
+        <span class="chip link">${icon("bed")} ${escapeHtml(stayLine)}</span>
+        ${cost>0?`<span class="chip cost">${icon("coins")} ${fmt.format(cost)} planned</span>`:""}
+      </div>
+    </div>
+    <div class="side">
+      ${statusPill(status)}
+      <button class="btn tiny" data-act="edit" data-type="trip" data-id="${r.id}">Edit</button>
+    </div>
+  </article>`;
+}
+
+/* ============================================================
+   STAYS
+   ============================================================ */
+function renderStays(){
+  const rows = applyFilter(db.accommodations, "accommodation").slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  $("pane-stays").innerHTML = `
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("bed")} Accommodation</h2>
+        <div class="right"><span class="meta">${confirmedStays().length} locked · ${db.accommodations.filter(needsBooking).length} to action</span>
+          <button class="btn primary" data-act="add" data-type="accommodation">${icon("plus")} Add stay</button></div></div>
+      <div class="cards">${rows.length ? rows.map(stayCard).join("") : empty("No stays match.","bed")}</div>
+    </div>`;
+}
+function stayCard(r){
+  const [dd,mm] = splitDate(r.date);
+  return `<article class="item">
+    <div class="date"><div class="d serif">${dd}</div><div class="m">${mm}</div>${r.night?`<div class="dow">${escapeHtml(r.night)}</div>`:""}</div>
+    <div class="body">
+      <h3 class="serif">${escapeHtml(r.property||"To book")}</h3>
+      <div class="route">${escapeHtml(r.area||"")}${r.roomsGuests?" · "+escapeHtml(r.roomsGuests):""}</div>
+      ${r.address?`<p>${escapeHtml(r.address)}</p>`:""}
+      <div class="tags">
+        ${r.checkInOut?`<span class="chip">${icon("clock")} ${escapeHtml(r.checkInOut)}</span>`:""}
+        ${r.contact?`<span class="chip">${icon("phone")} ${escapeHtml(r.contact)}</span>`:""}
+      </div>
+      ${r.note?`<p style="margin-top:8px"><em>${escapeHtml(r.note)}</em></p>`:""}
+    </div>
+    <div class="side">
+      ${statusPill(r.status)}
+      <button class="btn tiny" data-act="edit" data-type="accommodation" data-id="${r.id}">Edit</button>
+    </div>
+  </article>`;
+}
+
+/* ============================================================
+   CHECKLIST (grouped)
+   ============================================================ */
+function renderChecklist(){
+  const rows = applyFilter(db.checklist, "checklist");
+  const groups = {};
+  rows.forEach(r=>{ (groups[r.category||"General"] ||= []).push(r); });
+  const order = Object.keys(groups).sort();
+  const body = order.length ? order.map(cat=>{
+    const items = groups[cat].slice().sort((a,b)=>String(a.due||"~").localeCompare(String(b.due||"~")));
+    const done = items.filter(isDone).length;
+    const pct = items.length?Math.round(done/items.length*100):0;
+    return `<div class="cl-group">
+      <div class="gh"><span class="nm serif">${escapeHtml(cat)}</span><span class="ct">${done}/${items.length}</span>
+        <span class="gtrack"><span class="gf" style="width:${pct}%"></span></span></div>
+      ${items.map(clItem).join("")}
+    </div>`;
+  }).join("") : empty("No tasks match your filters.","check");
+  $("pane-checklist").innerHTML = `
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("check")} Pre-trip checklist</h2>
+        <div class="right"><span class="meta">${db.checklist.filter(isDone).length}/${db.checklist.length} done</span>
+          <button class="btn primary" data-act="add" data-type="checklist">${icon("plus")} Add task</button></div></div>
+      ${body}
+    </div>`;
+}
+function clItem(r){
+  const dn = isDone(r);
+  return `<div class="cl-item ${dn?"done":""}">
+    <button class="cb" data-act="cycle" data-id="${r.id}" title="Cycle status">${icon("check")}</button>
+    <div class="txt"><div class="t">${escapeHtml(r.task)}</div>${r.notes?`<div class="n">${escapeHtml(r.notes)}</div>`:""}
+      <div class="n">${statusPill(r.status,true)}${r.owner?` · ${escapeHtml(r.owner)}`:""}</div></div>
+    <div class="due">${r.due?dateText(r.due):"—"}<small>${dn?"done":"due"}</small>
+      <button class="linkbtn" data-act="edit" data-type="checklist" data-id="${r.id}" style="font-size:11px">edit</button></div>
+  </div>`;
+}
+
+/* ============================================================
+   EXPENSES (sortable table)
+   ============================================================ */
+function renderExpenses(){
+  const rows = sortRows(applyFilter(db.expenses, "expense"), "exp");
+  const t = totals();
+  const body = rows.length ? rows.map(e=>`<tr>
+    <td>${dateText(e.date)}</td>
+    <td><span class="chip" style="background:transparent;border-color:${COLORMAP[e.category]||"var(--line)"}">${escapeHtml(e.category||"—")}</span></td>
+    <td><div class="lead2">${escapeHtml(e.description||"—")}</div><div class="sub">${escapeHtml(e.place||e.vendor||"")}</div></td>
+    <td>${payerPill(e.payer)}</td>
+    <td>${escapeHtml(e.split||"—")}</td>
+    <td class="num">${fmt.format(num(e.amount))}</td>
+    <td><button class="linkbtn" data-act="edit" data-type="expense" data-id="${e.id}">Edit</button></td>
+  </tr>`).join("") : `<tr><td colspan="7">${empty("No expenses match.","wallet")}</td></tr>`;
+  $("pane-expenses").innerHTML = `
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("wallet")} Expense ledger</h2>
+        <div class="right"><span class="meta">${rows.length}/${db.expenses.length} shown · total ${fmt.format(t.actual)}</span>
+          <button class="btn primary" data-act="add" data-type="expense">${icon("plus")} Add expense</button></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr>${th("Date","date","exp")}${th("Category","category","exp")}${th("Description","description","exp")}
+          ${th("Payer","payer","exp")}${th("Split","split","exp")}${th("Amount","amount","exp",true)}<th></th></tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr><td colspan="5">Total logged</td><td class="num">${fmt.format(t.actual)}</td><td></td></tr></tfoot>
+      </table></div>
+    </div>`;
+}
+function payerPill(p){
+  if(p==="TJ") return `<span class="pill info" style="cursor:default">TJ</span>`;
+  if(p==="EK") return `<span class="pill ok" style="cursor:default">EK</span>`;
+  return `<span class="pill neutral" style="cursor:default">${escapeHtml(p||"TBD")}</span>`;
+}
+
+/* ============================================================
+   ROUTE MAP
+   ============================================================ */
+function renderMap(){
+  const fuel = fuelSummary();
+  const legs = db.tripPlans.slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  const legList = legs.map(t=>{
+    const km = legKm(t.date);
+    const [dd,mm]=splitDate(t.date);
+    return `<div class="leg" data-act="edit" data-type="trip" data-id="${t.id}">
+      <div class="ld">${dd} ${mm}<br>${escapeHtml(t.day||"")}</div>
+      <div><div class="ln">${escapeHtml(t.overnight||t.route)}</div><div class="ls">${escapeHtml(t.route||"")}</div></div>
+      <div class="lk">${km?fmtN.format(km)+" km":""}<br>${statusPill(connectedStatus(t),true)}</div>
+    </div>`;
+  }).join("");
+  $("pane-map").innerHTML = `
+    <div class="panel" style="padding:0;overflow:hidden">
+      <div style="padding:18px 18px 0"><div class="sec-head"><h2 class="serif">${icon("pin")} Trans-Java → Bali route</h2>
+        <span class="meta">schematic · ~${fmtN.format(fuel.km)} km round trip</span></div></div>
+      <div class="routemap" style="border:0;border-radius:0">${routeSvg(false)}</div>
+      <div class="legend">
+        <span class="l"><span class="sw" style="background:var(--teal)"></span>Confirmed</span>
+        <span class="l"><span class="sw" style="background:var(--warn)"></span>Needs booking / decision</span>
+        <span class="l"><span class="sw" style="background:var(--clay)"></span>Ferry crossing</span>
+        <span class="l"><span class="sw" style="background:var(--faint)"></span>Pass-through stop</span>
+      </div>
+    </div>
+    <div class="dist-grid">
+      <div class="dist"><div class="v">${fmtN.format(fuel.km)}<span style="font-size:13px"> km</span></div><div class="k">Total distance</div></div>
+      <div class="dist"><div class="v">${db.tripPlans.length}</div><div class="k">Legs</div></div>
+      <div class="dist"><div class="v">2</div><div class="k">Ferry crossings</div></div>
+      <div class="dist"><div class="v" style="font-size:20px">${fmt.format(fuel.cost)}</div><div class="k">Est. fuel + buffer</div></div>
+    </div>
+    <div class="panel" style="margin-top:16px">
+      <div class="sec-head"><h2 class="serif">${icon("car")} Legs</h2><span class="meta">tap a leg to edit</span></div>
+      <div class="legline">${legList||empty("No legs.","route")}</div>
+    </div>`;
+}
+function routeSvg(mini){
+  const W=820, H=mini?330:400;
+  const sx = x=>x*(W/820), sy = y=>y*(H/400);
+  // path through stops in order
+  const pts = MAP_STOPS.map(s=>`${sx(s.x)},${sy(s.y)}`);
+  // outbound = bintaro..south..westbali, return = solo..home; build a smooth-ish polyline
+  const line = MAP_STOPS.map((s,i)=> (i===0?"M":"L")+sx(s.x)+" "+sy(s.y)).join(" ");
+  const colorFor = s=>{
+    if(s.type==="ferry") return "var(--clay)";
+    if(s.type==="stop") return "var(--faint)";
+    if(s.type==="start"||s.type==="end") return "var(--ink2)";
+    // overnight: status from matching trip
+    const trip = db.tripPlans.find(t=>(t.overnight||"").toLowerCase().includes(s.label.toLowerCase()) || (s.label==="Uluwatu" && /uluwatu|nusa dua|jimbaran/i.test(t.overnight||"")));
+    const st = trip ? connectedStatus(trip) : "";
+    return /confirm|book|done|no hotel/i.test(st) ? "var(--teal)" : "var(--warn)";
+  };
+  const nodes = MAP_STOPS.map((s,i)=>{
+    const c = colorFor(s);
+    const r = (s.type==="start"||s.type==="end")?9:(s.type==="ferry"?6:7);
+    const lblY = s.y < 180 ? s.y-16 : s.y+22;
+    return `<g class="mnode">
+      ${s.type==="ferry"?`<rect x="${sx(s.x)-6}" y="${sy(s.y)-6}" width="12" height="12" rx="3" fill="${c}" stroke="var(--card)" stroke-width="2" transform="rotate(45 ${sx(s.x)} ${sy(s.y)})"/>`
+        :`<circle cx="${sx(s.x)}" cy="${sy(s.y)}" r="${r}" fill="${c}" stroke="var(--card)" stroke-width="2.5"/>`}
+      ${mini?"":`<text x="${sx(s.x)}" y="${sy(lblY)}" text-anchor="middle" font-family="Inter,system-ui,-apple-system,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="var(--ink)">${escapeHtml(s.label)}</text>
+      <text x="${sx(s.x)}" y="${sy(lblY)+13}" text-anchor="middle" font-family="SFMono-Regular,Menlo,monospace" font-size="9.5" fill="var(--muted)">${escapeHtml(s.sub)}</text>`}
+    </g>`;
+  }).join("");
+  // sea + land hint shapes
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Route map">
+    <defs>
+      <linearGradient id="rline" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stop-color="var(--teal)"/><stop offset="0.6" stop-color="var(--gold)"/><stop offset="1" stop-color="var(--clay)"/>
+      </linearGradient>
+    </defs>
+    ${mini?"":`<text x="20" y="${H-16}" font-family="SFMono-Regular,Menlo,monospace" font-size="10" fill="var(--faint)">JAVA</text>
+    <text x="${W-70}" y="${H-16}" font-family="SFMono-Regular,Menlo,monospace" font-size="10" fill="var(--faint)">BALI</text>`}
+    <path d="${line}" fill="none" stroke="url(#rline)" stroke-width="${mini?2.4:3.2}" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="${mini?"":"1 0"}" opacity="0.9"/>
+    ${nodes}
+  </svg>`;
+}
+
+/* ============================================================
+   DINING (was hidden in source data!)
+   ============================================================ */
+function renderDining(){
+  const list = db.restaurants||[];
+  const cards = list.length ? list.map(r=>`
+    <div class="dine">
+      <div class="rank serif">${r.no||""}</div>
+      <h3 class="serif">${escapeHtml(r.name||"")}</h3>
+      ${r.bestFor?`<div class="best">${escapeHtml(r.bestFor)}</div>`:""}
+      ${r.cuisine?`<span class="cuisine">${escapeHtml(r.cuisine)}</span>`:""}
+      ${r.why?`<p>${escapeHtml(r.why)}</p>`:""}
+      <div class="facts">
+        ${r.hours?`<div class="f">${icon("clock")}<span>${escapeHtml(r.hours)}</span></div>`:""}
+        ${r.address?`<div class="f">${icon("pin")}<span>${escapeHtml(r.address)}</span></div>`:""}
+        ${r.contact?`<div class="f">${icon("phone")}<span>${escapeHtml(r.contact)}</span></div>`:""}
+        ${r.url?`<div class="f">${icon("link")}<span><a href="${escapeAttr(r.url)}" target="_blank" rel="noopener">View listing</a></span></div>`:""}
+      </div>
+    </div>`).join("") : empty("No dining options yet.","fork");
+  $("pane-dining").innerHTML = `
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("fork")} Lovina arrival dining</h2><span class="meta">${list.length} picks · west / north Bali</span></div>
+      <div class="dine-grid">${cards}</div>
+      ${db.restaurantNote?`<div class="callout">${icon("star")}<div class="t"><b>Recommendation.</b> ${escapeHtml(db.restaurantNote)}</div></div>`:""}
+    </div>`;
+}
+
+/* ============================================================
+   DATA TOOLS + SOURCES (sources were hidden too!)
+   ============================================================ */
+function renderData(){
+  const upd = db.metadata.updatedAt ? new Date(db.metadata.updatedAt).toLocaleString("en-GB") : "seed";
+  const counts = { trips:db.tripPlans.length, stays:db.accommodations.length, tasks:db.checklist.length,
+    expenses:db.expenses.length, planRows:db.categoryDetails.length, restaurants:db.restaurants.length, sources:db.sources.length };
+  const src = (db.sources||[]).map(s=>{
+    const item = s["Source Item"]||s.item||"";
+    const det = s["Details Used"]||s.details||"";
+    const url = s["Source / URL"]||s.url||"";
+    const isLink = /^https?:/.test(url);
+    return `<div class="src"><div><div class="si">${escapeHtml(item)}</div>${det?`<div class="sd">${escapeHtml(det)}</div>`:""}</div>
+      <div class="su">${isLink?`<a href="${escapeAttr(url)}" target="_blank" rel="noopener">${escapeHtml(url.replace(/^https?:\/\//,""))}</a>`:escapeHtml(url)}</div></div>`;
+  }).join("");
+  $("pane-data").innerHTML = `
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("db")} Local database</h2><span class="meta">last update ${upd}</span></div>
+      <div class="tools">
+        <div class="tool"><h4>${icon("download")} Export</h4><p>Download the full database as JSON. Replace <code>data/db.json</code> with it and commit to update the seed.</p></div>
+        <div class="tool"><h4>${icon("upload")} Import</h4><p>Load a previously exported JSON to restore or move between devices. Structure is validated before applying.</p></div>
+        <div class="tool"><h4>${icon("reset")} Reset</h4><p>Discard browser-local edits and reload the embedded seed (also tries <code>data/db.json</code> if served).</p></div>
+      </div>
+      <div class="dist-grid" style="margin-top:4px">
+        ${Object.entries(counts).map(([k,v])=>`<div class="dist"><div class="v">${v}</div><div class="k">${k}</div></div>`).join("")}
+      </div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("doc")} Sources &amp; references</h2><span class="meta">${db.sources.length} items</span></div>
+      <div class="src-list">${src||empty("No sources recorded.","doc")}</div>
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("globe")} Raw snapshot</h2></div>
+      <pre>${escapeHtml(JSON.stringify({metadata:db.metadata, settings:db.settings, counts}, null, 2))}</pre>
+    </div>`;
+}
+
+/* ============================================================
+   EDITOR MODAL
+   ============================================================ */
+function openEditor(type, id=""){
+  const schema = schemas[type]; if(!schema) return;
+  const record = id ? (db[schema.collection].find(x=>x.id===id) || {}) : {};
+  activeEdit = { type, id, schema };
+  $("modalEb").textContent = id ? "Edit" : "Add";
+  $("modalTitle").textContent = schema.title;
+  $("modalFields").innerHTML = fieldHtml(schema.fields, record);
+  $("deleteBtn").style.display = id ? "" : "none";
+  $("dialog").showModal();
+}
+function fieldHtml(fields, rec={}){
+  return fields.map(([key,label,type="text"])=>{
+    const v = rec[key] ?? "";
+    const wide = (type==="textarea"||["route","mainPlan","drivingPlan","mealsRest","actionNeeded","address","note","notes","task"].includes(key))?" wide":"";
+    if(type==="textarea") return `<label class="${wide}">${label}<textarea name="${key}">${escapeHtml(v)}</textarea></label>`;
+    if(type==="date") return `<label class="${wide}">${label}<input type="date" name="${key}" value="${escapeAttr(v)}"></label>`;
+    if(type==="number") return `<label class="${wide}">${label}<input type="number" name="${key}" value="${escapeAttr(v)}" inputmode="numeric"></label>`;
+    if(type.startsWith("select:")){
+      const lk=type.split(":")[1];
+      const list = lk==="yesno"?["Yes","No"] : lk==="detailCategories"?detailCategories() : (db.lists[lk]||[]);
+      const opts = list.map(o=>`<option ${o===v?"selected":""}>${escapeHtml(o)}</option>`).join("");
+      return `<label class="${wide}">${label}<select name="${key}">${v&&!list.includes(v)?`<option selected>${escapeHtml(v)}</option>`:""}${opts}</select></label>`;
+    }
+    return `<label class="${wide}">${label}<input name="${key}" value="${escapeAttr(v)}"></label>`;
+  }).join("");
+}
+function recordFromForm(form, fields){
+  const fd = new FormData(form), out={};
+  fields.forEach(([key,,type])=> out[key] = type==="number" ? num(fd.get(key)) : clean(fd.get(key)));
+  return out;
+}
+function saveEditor(e){
+  e.preventDefault();
+  if(!activeEdit) return;
+  const { type, id, schema } = activeEdit;
+  const rec = recordFromForm($("editForm"), schema.fields);
+  const list = db[schema.collection];
+  if(id){ const i=list.findIndex(x=>x.id===id); if(i>=0) list[i]={...list[i],...rec}; }
+  else { list.unshift({ id:newId(type), ...rec }); }
+  if(type==="categoryDetail" && rec.category==="Fuel/Diesel") recalcFuel();
+  persist(); $("dialog").close(); renderAll();
+  toast(id?"Saved changes":"Added new record");
+}
+function deleteActive(){
+  if(!activeEdit?.id) return;
+  if(!confirm("Delete this record permanently?")) return;
+  const c = activeEdit.schema.collection;
+  db[c] = db[c].filter(x=>x.id!==activeEdit.id);
+  persist(); $("dialog").close(); renderAll(); toast("Record deleted");
+}
+function cycleTask(id){
+  const t = db.checklist.find(x=>x.id===id); if(!t) return;
+  const states = ["Not started","In progress","Done"];
+  const cur = states.findIndex(s=>s.toLowerCase()===String(t.status||"").toLowerCase());
+  t.status = states[(cur+1)%states.length] || "Not started";
+  persist(); renderAll();
+}
+
+/* ============================================================
+   IMPORT / EXPORT / RESET
+   ============================================================ */
+function exportDb(){
+  const blob = new Blob([JSON.stringify(db,null,2)],{type:"application/json"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob);
+  a.download=`rtbali-db-${new Date().toISOString().slice(0,10)}.json`; a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),1000); toast("Database exported");
+}
+function importDb(e){
+  const f=e.target.files?.[0]; if(!f) return;
+  const reader=new FileReader();
+  reader.onload=()=>{
+    try{
+      const inc=JSON.parse(reader.result);
+      if(!inc || typeof inc!=="object" || !Array.isArray(inc.tripPlans) || !Array.isArray(inc.expenses))
+        throw new Error("shape");
+      db = normalize(inc); persist(); renderAll(); toast("Database imported");
+    }catch(_){ alert("That file does not look like an RTBALI export."); }
+    finally{ e.target.value=""; }
+  };
+  reader.readAsText(f);
+}
+async function resetSeed(){
+  if(!confirm("Discard local edits and reload the seed database?")) return;
+  let seed = structuredClone(SEED);
+  try{ const r=await fetch("data/db.json",{cache:"no-store"}); if(r.ok){ seed = normalize(await r.json()); } }catch(_){}
+  store.remove(STORAGE_KEY);
+  db = normalize(seed);
+  const p=$("syncState"); p.classList.remove("dirty"); p.innerHTML='<span class="led"></span> Seed loaded';
+  renderAll(); toast("Reset to seed");
+}
+
+/* ============================================================
+   FILTER / SORT
+   ============================================================ */
+function applyFilter(rows, type){
+  const q = clean($("search").value).toLowerCase();
+  const status = $("statusFilter").value;
+  const cat = $("categoryFilter").value;
+  return rows.filter(r=>{
+    const hay = JSON.stringify(r).toLowerCase();
+    const rs = r.status||r.bookingStatus||"";
+    const rc = r.category||"";
+    const statusOk = !status || rs===status || type==="categoryDetail";
+    const catOk = !cat || rc===cat || type==="trip" || type==="accommodation";
+    return (!q||hay.includes(q)) && statusOk && catOk;
+  });
+}
+function sortTable(table, key, numeric){
+  const cur = sortState[table];
+  if(cur && cur.key===key) cur.dir = -cur.dir;
+  else sortState[table] = { key, dir:1, numeric };
+  renderAll();
+}
+function sortRows(rows, table){
+  const s = sortState[table]; if(!s) return rows;
+  const copy = rows.slice();
+  copy.sort((a,b)=>{
+    let av, bv;
+    if(s.key==="__base"){ av=calcDetail(a).base; bv=calcDetail(b).base; }
+    else if(s.key==="__buf"){ av=calcDetail(a).bufferAmt; bv=calcDetail(b).bufferAmt; }
+    else if(s.key==="__total"){ av=calcDetail(a).total; bv=calcDetail(b).total; }
+    else { av=a[s.key]; bv=b[s.key]; }
+    if(s.numeric || s.key.startsWith("__")){ av=num(av); bv=num(bv); return (av-bv)*s.dir; }
+    return String(av??"").localeCompare(String(bv??""), undefined, {numeric:true}) * s.dir;
+  });
+  return copy;
+}
+function th(label, key, table, numeric){
+  const s=sortState[table];
+  const active = s && s.key===key;
+  const arrow = active ? (s.dir>0?"▲":"▼") : "▲";
+  return `<th class="${active?"sorted":""}" data-act="sort" data-table="${table}" data-key="${key}" data-numeric="${numeric?1:0}">${escapeHtml(label)} <span class="sortarrow">${arrow}</span></th>`;
+}
+
+/* ============================================================
+   DOMAIN HELPERS
+   ============================================================ */
+const COLORMAP = {
+  "Fuel/Diesel":"#cf5630","Toll/e-Money":"#235b9e","Ferry":"#0d7d72","Hotel":"#7a4b73",
+  "Food & Drinks":"#c98a1f","Activity/Tickets":"#1f7a4d","Parking":"#8a6d3b","Necessities":"#b3271e","Other":"#7b7464","Cost Details":"#7b7464"
+};
+function isDone(x){ return /^done$/i.test(x.status||x.bookingStatus||""); }
+function needsBooking(a){ return /need|to book|to decide|decide/i.test(a.status||"") || /^(to book|to decide)$/i.test(a.property||""); }
+function confirmedStays(){ return db.accommodations.filter(a=>/confirm|booked|done/i.test(a.status||"")); }
+function isHomeLeg(t){ return /home|no hotel/i.test(`${t.overnight} ${t.bookingStatus}`); }
+function stayForTrip(t){
+  const date=clean(t.date), ov=clean(t.overnight).toLowerCase();
+  return db.accommodations.find(a=>clean(a.date)===date)
+    || db.accommodations.find(a=>{ const ar=clean(a.area).toLowerCase(); return ar && (ov.includes(ar)||ar.includes(ov.split(/[\/ ]/)[0])); })
+    || null;
+}
+function connectedStatus(t){
+  if(isHomeLeg(t)) return t.bookingStatus || "No hotel needed";
+  const s = stayForTrip(t);
+  return s?.status || t.bookingStatus || "Not linked";
+}
+function linkedTripDays(){ return db.tripPlans.filter(t=>isHomeLeg(t)||stayForTrip(t)); }
+function dayCost(date){ let s=0; db.categoryDetails.filter(r=>r.date===date).forEach(r=>s+=calcDetail(r).total); return s; }
+function legKm(date){ let s=0; db.categoryDetails.filter(r=>r.date===date && r.category==="Fuel/Diesel").forEach(r=>s+=num(r.km)); return s; }
+
+function statusPill(status, asText){
+  const s = String(status||"").toLowerCase();
+  let cls="neutral";
+  if(/confirm|booked|done|no hotel/.test(s)) cls="ok";
+  else if(/need decision/.test(s)) cls="info";
+  else if(/need|to book|to decide|progress/.test(s)) cls="warn";
+  else if(/not started|not linked/.test(s)) cls="neutral";
+  const label = status || "—";
+  if(asText) return `<span class="pill ${cls}" style="cursor:default;padding:2px 8px;font-size:11px">${escapeHtml(label)}</span>`;
+  return `<span class="pill ${cls}">${escapeHtml(label)}</span>`;
+}
+
+/* ============================================================
+   GENERIC HELPERS
+   ============================================================ */
+function fillSelect(sel, values, firstLabel){
+  sel.innerHTML = values.map((v,i)=>`<option value="${escapeAttr(v)}">${escapeHtml(i===0&&firstLabel?firstLabel:v)}</option>`).join("");
+}
+function num(v){ const p=Number(String(v??"").replace(/[^\d.-]/g,"")); return Number.isFinite(p)?p:0; }
+function clean(v){ return String(v??"").trim(); }
+function newId(p){ return `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2,7)}`; }
+function debounce(fn,ms){ let t; return (...a)=>{ clearTimeout(t); t=setTimeout(()=>fn(...a),ms); }; }
+function dateText(v){ if(!v) return "—"; const d=new Date(v); return isNaN(d)?String(v):d.toLocaleDateString("en-GB",{day:"2-digit",month:"short"}); }
+function splitDate(v){ if(!v) return ["—",""]; const d=new Date(v); if(isNaN(d)) return [String(v),""]; return [String(d.getDate()).padStart(2,"0"), d.toLocaleDateString("en-GB",{month:"short"})]; }
+function firstClause(s){ return String(s||"").split(/[;.]/)[0].trim(); }
+function empty(text, ic){ return `<div class="empty">${ic?icon(ic):""}${escapeHtml(text)}</div>`; }
+function escapeHtml(v){ return String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function escapeAttr(v){ return escapeHtml(v); }
+function toast(msg){
+  const t=$("toast"); t.innerHTML = icon("check")+`<span>${escapeHtml(msg)}</span>`; t.classList.add("show");
+  clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("show"),2200);
+}
+
+/* ---------- start the app (after all declarations are initialized) ---------- */
+document.addEventListener("DOMContentLoaded", init);
+if (document.readyState !== "loading") init();
+
+</script>
+</body>
+</html>
