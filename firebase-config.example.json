@@ -1,0 +1,6 @@
+{
+  "apiBase": "https://YOUR_REGION-YOUR_PROJECT.cloudfunctions.net/api",
+  "tripId": "rtbali",
+  "syncKey": "change-this-shared-sync-key"
+}
+

@@ -3,4 +3,8 @@
 node_modules/
 .env
 .env.*
-
+!.env.example
+firebase-config.json
+functions/.env
+functions/.env.*
+!functions/.env.example

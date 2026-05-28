@@ -1,10 +1,11 @@
-const CACHE_NAME = "rtbali-offline-v2";
+const CACHE_NAME = "rtbali-offline-v3";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./RTBALI_command_center.html",
   "./data/db.json",
   "./db.json",
+  "./firebase-client.js",
   "./manifest.webmanifest"
 ];
 
@@ -28,6 +29,7 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== location.origin) return;
+  if (url.pathname.endsWith("/firebase-config.json")) return;
 
   if (request.mode === "navigate") {
     event.respondWith(fetch(request).catch(() => caches.match("./index.html")));
@@ -50,6 +52,7 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     caches.match(request).then((cached) => {
       return cached || fetch(request).then((response) => {
+        if (!response.ok) return response;
         const copy = response.clone();
         caches.open(CACHE_NAME).then((cache) => cache.put(request, copy));
         return response;

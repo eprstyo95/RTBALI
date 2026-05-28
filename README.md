@@ -42,6 +42,75 @@ local database, replace `data/db.json` with the exported file and commit it to g
 Keep root `db.json` as a portable copy for older/manual workflows. **Import**
 restores a saved export and validates its structure before applying.
 
+## Firebase + Telegram group mode
+
+This repo includes an optional Firebase backend for a 4-person shared expense
+tracker. The GitHub Pages app still works offline; Firebase is only used when you
+add a local `firebase-config.json`.
+
+What it adds:
+
+- Telegram group bot manual expense commands.
+- Receipt photo upload to Firebase Storage.
+- OCR draft expenses using Google Cloud Vision.
+- Firestore trip database with members, expenses, receipts, and settlement data.
+- Web app buttons to pull/push/merge Firebase expenses and upload receipt photos.
+
+### Firebase setup
+
+1. Create a Firebase project and enable Firestore, Storage, and Cloud Functions.
+2. Copy `.firebaserc.example` to `.firebaserc` and set your project id.
+3. Copy `functions/.env.example` to `functions/.env` and fill:
+   - `TELEGRAM_BOT_TOKEN`
+   - `TELEGRAM_WEBHOOK_SECRET`
+   - `RTBALI_LINK_CODE`
+   - `RTBALI_SYNC_KEY`
+   - optional `RTBALI_ALLOWED_CHAT_ID`
+4. From `functions/`, run `npm install`.
+5. From the repo root, run `firebase deploy`.
+6. Set Telegram webhook:
+
+```bash
+curl "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
+  -H "content-type: application/json" \
+  -d '{"url":"https://REGION-PROJECT.cloudfunctions.net/telegramWebhook","secret_token":"YOUR_WEBHOOK_SECRET"}'
+```
+
+### Web sync setup
+
+Copy `firebase-config.example.json` to `firebase-config.json` and set:
+
+- `apiBase`: your deployed `api` Cloud Function URL.
+- `tripId`: normally `rtbali`.
+- `syncKey`: same value as `RTBALI_SYNC_KEY`.
+
+`firebase-config.json` is ignored by git so the shared sync key is not committed.
+
+### Telegram commands
+
+In your Telegram group:
+
+```text
+/link YOUR_CODE TJ
+/link YOUR_CODE EK
+/link YOUR_CODE P3
+/link YOUR_CODE P4
+/expense meal 220000 paid TJ split 50/50
+/meal 220000 paid EK split order
+/saldo
+/who
+```
+
+Send a receipt photo to create an OCR draft. Confirm it with:
+
+```text
+/confirm EXPENSE_ID
+```
+
+When `firebase-config.json` exists, the web app also shows **OCR receipt**. Pick or
+take a receipt photo, then the backend stores the image, runs OCR, creates a draft
+expense, and merges it into the local ledger for review.
+
 ## GitHub layout
 
 - `index.html` — GitHub Pages entry point.
@@ -49,6 +118,9 @@ restores a saved export and validates its structure before applying.
 - `data/db.json` — git-tracked local database seed.
 - `db.json` — root copy of the same seed for direct/manual use.
 - `sw.js` and `manifest.webmanifest` — offline cache / install support.
+- `functions/` — Firebase Cloud Functions Telegram bot and sync API.
+- `firestore.rules`, `storage.rules` — backend security rules.
+- `firebase-config.example.json` — example browser sync config.
 
 ## Data model (`db.json`)
 

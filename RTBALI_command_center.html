@@ -1684,10 +1684,34 @@ function toast(msg){
   clearTimeout(toast._t); toast._t=setTimeout(()=>t.classList.remove("show"),2200);
 }
 
+window.RTBALI = {
+  getDb: () => structuredClone(db),
+  replaceDb(nextDb, message = "Cloud database loaded"){
+    db = normalize(nextDb);
+    persist();
+    renderAll();
+    toast(message);
+  },
+  mergeExpenses(expenses = [], message = "Cloud expenses merged"){
+    const seen = new Set(db.expenses.map(e => e.id));
+    expenses.forEach(expense => {
+      if (!expense || !expense.id || seen.has(expense.id)) return;
+      db.expenses.unshift(expense);
+      seen.add(expense.id);
+    });
+    db = normalize(db);
+    persist();
+    renderAll();
+    toast(message);
+  },
+  toast
+};
+
 /* ---------- start the app (after all declarations are initialized) ---------- */
 document.addEventListener("DOMContentLoaded", init);
 if (document.readyState !== "loading") init();
 
 </script>
+<script src="firebase-client.js"></script>
 </body>
 </html>
