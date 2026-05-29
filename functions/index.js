@@ -1357,8 +1357,10 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
       }
       await tripRef(tripId).set({ db: importedDb, updatedAt: nowField(), createdAt: nowField() }, { merge: true });
       const batch = db.batch();
+      const importedExpenseIds = new Set();
       importedDb.expenses.forEach((expense) => {
         const expenseId = expense.id || id("web-exp");
+        importedExpenseIds.add(expenseId);
         batch.set(tripRef(tripId).collection("expenses").doc(expenseId), {
           ...expense,
           id: expenseId,
@@ -1368,8 +1370,23 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
           updatedAt: nowField()
         }, { merge: true });
       });
+      const existingExpenses = await tripRef(tripId).collection("expenses").get();
+      let prunedExpenses = 0;
+      existingExpenses.forEach((doc) => {
+        if (importedExpenseIds.has(doc.id)) return;
+        const expense = doc.data();
+        batch.delete(doc.ref);
+        prunedExpenses += 1;
+        if (expense?.receiptId) {
+          batch.set(tripRef(tripId).collection("receipts").doc(expense.receiptId), {
+            status: "deleted",
+            deletedExpenseId: doc.id,
+            updatedAt: nowField()
+          }, { merge: true });
+        }
+      });
       await batch.commit();
-      return res.json({ ok: true, importedExpenses: importedDb.expenses.length });
+      return res.json({ ok: true, importedExpenses: importedDb.expenses.length, prunedExpenses });
     }
 
     if (req.method === "POST" && path === "receipt") {

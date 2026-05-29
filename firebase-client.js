@@ -139,12 +139,13 @@
   async function pushDb(config) {
     status("Pushing...");
     const db = window.RTBALI.getDb();
-    await request(config, `/import?tripId=${encodeURIComponent(config.tripId)}`, {
+    const payload = await request(config, `/import?tripId=${encodeURIComponent(config.tripId)}`, {
       method: "POST",
       body: JSON.stringify({ db })
     });
-    status("Pushed to Firebase");
-    window.RTBALI.toast("Pushed to Firebase");
+    const pruned = Number(payload?.prunedExpenses || 0);
+    status(pruned ? `Pushed; pruned ${pruned} cloud expenses` : "Pushed to Firebase");
+    window.RTBALI.toast(pruned ? `Pushed; removed ${pruned} cloud expenses` : "Pushed to Firebase");
   }
 
   async function pullDb(config) {
