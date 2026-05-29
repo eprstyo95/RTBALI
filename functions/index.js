@@ -271,6 +271,41 @@ function ocrDraftKeyboard(expenseId) {
   };
 }
 
+function ocrCommandKeyboard() {
+  return {
+    keyboard: [
+      [
+        { text: "/set paid TJ" },
+        { text: "/set paid EK" }
+      ],
+      [
+        { text: "/set paid P3" },
+        { text: "/set paid P4" }
+      ],
+      [
+        { text: "/set split units" },
+        { text: "/set split 50/50" }
+      ],
+      [
+        { text: "/set split TJ" },
+        { text: "/set split EK" }
+      ],
+      [
+        { text: "/set payment Cash" },
+        { text: "/set payment QRIS" },
+        { text: "/set payment Card" }
+      ],
+      [
+        { text: "/confirm" },
+        { text: "/hidekeys" }
+      ]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+    input_field_placeholder: "Tap a draft action"
+  };
+}
+
 function ocrDraftText(draft, ocr = null) {
   const lines = [
     "Receipt OCR draft saved.",
@@ -284,11 +319,10 @@ function ocrDraftText(draft, ocr = null) {
   if (ocr) lines.push(`OCR: ${ocrStatusText(ocr)}`);
   lines.push(
     "",
-    "Reliable commands:",
+    "Tap the keyboard buttons below, or type:",
     `<code>/set ${draft.id} paid TJ split units payment Cash</code>`,
     "<code>/set paid EK split 50/50 payment QRIS</code>",
-    `<code>/confirm ${draft.id}</code>`,
-    "Buttons are optional."
+    `<code>/confirm ${draft.id}</code>`
   );
   return lines.join("\n");
 }
@@ -747,7 +781,7 @@ async function handlePhoto(tripId, message, member) {
     updatedAt: nowField()
   });
   await saveExpense(tripId, draft);
-  return telegramResponse(ocrDraftText(draft, ocr), { reply_markup: ocrDraftKeyboard(draft.id) });
+  return telegramResponse(ocrDraftText(draft, ocr), { reply_markup: ocrCommandKeyboard() });
 }
 
 async function saveReceiptDraftFromBuffer(tripId, buffer, metadata = {}) {
@@ -836,11 +870,16 @@ async function handleCommand(tripId, message) {
 
   if (command === "/confirm") {
     const result = await confirmExpense(tripId, args[0], member);
-    return result.message;
+    return telegramResponse(result.message, result.ok ? { reply_markup: { remove_keyboard: true } } : {});
   }
 
   if (command === "/set" || command === "/editdraft") {
-    return setDraftExpense(tripId, args, member);
+    const result = await setDraftExpense(tripId, args, member);
+    return telegramResponse(result, { reply_markup: ocrCommandKeyboard() });
+  }
+
+  if (command === "/hidekeys" || command === "/hidekeyboard") {
+    return telegramResponse("Keyboard hidden.", { reply_markup: { remove_keyboard: true } });
   }
 
   if (command === "/receipt") {
