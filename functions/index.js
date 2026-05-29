@@ -75,7 +75,12 @@ function clean(text) {
 }
 
 function num(text) {
-  const parsed = Number(String(text || "").replace(/[^\d.-]/g, ""));
+  if (typeof text === "number") return Number.isFinite(text) ? text : 0;
+  const cleaned = String(text || "").replace(/[^\d.,-]/g, "");
+  const normalized = /[.,]/.test(cleaned)
+    ? cleaned.replace(/[.,]/g, "")
+    : cleaned;
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -486,20 +491,49 @@ async function downloadTelegramFile(fileId) {
 
 async function ocrImage(buffer) {
   try {
-    const [result] = await visionClient.textDetection({ image: { content: buffer } });
-    return result.fullTextAnnotation?.text || "";
+    const [documentResult] = await visionClient.documentTextDetection({ image: { content: buffer } });
+    const documentText = documentResult.fullTextAnnotation?.text || "";
+    if (documentText) {
+      return { text: documentText, status: "detected", engine: "documentTextDetection" };
+    }
+
+    const [textResult] = await visionClient.textDetection({ image: { content: buffer } });
+    const text = textResult.fullTextAnnotation?.text || "";
+    return {
+      text,
+      status: text ? "detected" : "empty",
+      engine: "textDetection"
+    };
   } catch (error) {
-    logger.warn("OCR failed", error.message);
-    return "";
+    logger.error("OCR failed", {
+      message: error.message,
+      code: error.code,
+      details: error.details
+    });
+    return {
+      text: "",
+      status: "failed",
+      engine: "google-cloud-vision",
+      error: error.message || "Unknown OCR error"
+    };
   }
+}
+
+function ocrStatusText(ocr) {
+  if (ocr.status === "detected") return `text detected by ${ocr.engine}`;
+  if (ocr.status === "failed") return `failed (${ocr.error || "check Cloud Function logs"})`;
+  return "no text detected";
 }
 
 function parseOcrExpense(ocrText, member) {
   const lines = clean(ocrText).split(/\n+/).map(clean).filter(Boolean);
-  const candidates = lines
-    .map((line) => num(line.match(/(?:rp\s*)?([\d.,]{4,})/i)?.[1]))
-    .filter((value) => value > 0);
-  const amount = Math.max(0, ...candidates);
+  const totalLine = [...lines].reverse().find((line) => /\b(?:grand\s*)?total\b|jumlah|tagihan|amount\s*due/i.test(line));
+  const totalAmount = num(totalLine?.match(/(?:rp\.?\s*)?([\d.,]{4,})/i)?.[1]);
+  const candidates = lines.flatMap((line) => {
+    const matches = [...line.matchAll(/(?:rp\.?\s*)?([\d.,]{4,})/gi)];
+    return matches.map((match) => num(match[1])).filter((value) => value > 0);
+  });
+  const amount = totalAmount || Math.max(0, ...candidates);
   const vendor = lines[0] || "Receipt";
   return {
     id: id("ocr-exp"),
@@ -535,14 +569,20 @@ async function handlePhoto(tripId, message, member) {
     metadata: { contentType: "image/jpeg" },
     resumable: false
   });
-  const ocrText = await ocrImage(file.buffer);
+  const ocr = await ocrImage(file.buffer);
+  const ocrText = ocr.text;
   const draft = parseOcrExpense(ocrText, member);
   draft.receiptId = receiptId;
+  draft.ocrStatus = ocr.status;
+  draft.ocrEngine = ocr.engine;
   await tripRef(tripId).collection("receipts").doc(receiptId).set({
     id: receiptId,
     telegramFileId: largest.file_id,
     storagePath: objectPath,
     ocrText,
+    ocrStatus: ocr.status,
+    ocrEngine: ocr.engine,
+    ocrError: ocr.error || "",
     parsedExpenseId: draft.id,
     status: "draft",
     createdByTelegramUserId: member?.telegramUserId || "",
@@ -555,7 +595,7 @@ async function handlePhoto(tripId, message, member) {
     `Draft id: <code>${draft.id}</code>`,
     `Vendor: ${draft.vendor}`,
     `Amount guess: <b>${rupiah(draft.amount)}</b>`,
-    `OCR: ${ocrText ? "text detected" : "no text detected"}`,
+    `OCR: ${ocrStatusText(ocr)}`,
     "Confirm by replying:",
     `<code>/confirm ${draft.id}</code>`,
     "or just <code>/confirm</code> for your latest draft."
@@ -569,14 +609,20 @@ async function saveReceiptDraftFromBuffer(tripId, buffer, metadata = {}) {
     metadata: { contentType: metadata.contentType || "image/jpeg" },
     resumable: false
   });
-  const ocrText = await ocrImage(buffer);
+  const ocr = await ocrImage(buffer);
+  const ocrText = ocr.text;
   const draft = parseOcrExpense(ocrText, metadata.member || null);
   draft.receiptId = receiptId;
   draft.source = metadata.source || "web-ocr";
+  draft.ocrStatus = ocr.status;
+  draft.ocrEngine = ocr.engine;
   await tripRef(tripId).collection("receipts").doc(receiptId).set({
     id: receiptId,
     storagePath: objectPath,
     ocrText,
+    ocrStatus: ocr.status,
+    ocrEngine: ocr.engine,
+    ocrError: ocr.error || "",
     parsedExpenseId: draft.id,
     status: "draft",
     source: draft.source,
@@ -584,7 +630,14 @@ async function saveReceiptDraftFromBuffer(tripId, buffer, metadata = {}) {
     updatedAt: nowField()
   });
   await saveExpense(tripId, draft);
-  return { receiptId, expense: toPlain({ ...draft, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }), ocrText };
+  return {
+    receiptId,
+    expense: toPlain({ ...draft, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }),
+    ocrText,
+    ocrStatus: ocr.status,
+    ocrEngine: ocr.engine,
+    ocrError: ocr.error || ""
+  };
 }
 
 async function handleCommand(tripId, message) {
