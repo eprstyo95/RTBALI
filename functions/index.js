@@ -74,6 +74,14 @@ function clean(text) {
   return String(text || "").trim();
 }
 
+function htmlEscape(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
 function num(text) {
   if (typeof text === "number") return Number.isFinite(text) ? text : 0;
   const cleaned = String(text || "").replace(/[^\d.,-]/g, "");
@@ -275,27 +283,48 @@ function ocrCommandKeyboard() {
   return {
     keyboard: [
       [
-        { text: "/set paid TJ" },
-        { text: "/set paid EK" }
+        { text: "/cat Food" },
+        { text: "/cat Fuel" }
       ],
       [
-        { text: "/set paid P3" },
-        { text: "/set paid P4" }
+        { text: "/cat Toll" },
+        { text: "/cat Ferry" }
+      ],
+      [
+        { text: "/cat Hotel" },
+        { text: "/cat Parking" }
+      ],
+      [
+        { text: "/cat Other" },
+        { text: "/confirm" }
+      ],
+      [
+        { text: "/hidekeys" }
+      ]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+    input_field_placeholder: "Pick category first"
+  };
+}
+
+function ocrGeneralKeyboard() {
+  return {
+    keyboard: [
+      [
+        { text: "/set paid TJ" },
+        { text: "/set paid EK" }
       ],
       [
         { text: "/set split units" },
         { text: "/set split 50/50" }
       ],
       [
-        { text: "/set split TJ" },
-        { text: "/set split EK" }
-      ],
-      [
         { text: "/set payment Cash" },
-        { text: "/set payment QRIS" },
-        { text: "/set payment Card" }
+        { text: "/set payment QRIS" }
       ],
       [
+        { text: "/cat Food" },
         { text: "/confirm" },
         { text: "/hidekeys" }
       ]
@@ -306,25 +335,60 @@ function ocrCommandKeyboard() {
   };
 }
 
+function ocrMealKeyboard() {
+  return {
+    keyboard: [
+      [
+        { text: "/meal" },
+        { text: "/set split 50/50" }
+      ],
+      [
+        { text: "/tjfood" },
+        { text: "/ekfood" }
+      ],
+      [
+        { text: "/shared" },
+        { text: "/tax" }
+      ],
+      [
+        { text: "/notax" },
+        { text: "/set payment QRIS" }
+      ],
+      [
+        { text: "/set paid TJ" },
+        { text: "/set paid EK" }
+      ],
+      [
+        { text: "/confirm" },
+        { text: "/hidekeys" }
+      ]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+    input_field_placeholder: "Meal split actions"
+  };
+}
+
 function ocrDraftText(draft, ocr = null) {
-  const lines = [
-    "Receipt OCR draft saved.",
-    `Draft id: <code>${draft.id}</code>`,
-    `Vendor: ${draft.vendor || draft.description || "Receipt"}`,
-    `Amount guess: <b>${rupiah(draft.amount)}</b>`,
-    `Payer: <b>${draft.payer || "TBD"}</b>`,
-    `Split: <b>${draft.billSplitMode !== "Off" ? draft.billSplitMode : draft.split}</b>`,
-    `Payment: <b>${draft.payment || "Cash"}</b>`
+  const split = draft.billSplitMode !== "Off" ? draft.billSplitMode : draft.split;
+  const summary = [
+    "<b>Receipt draft saved</b>",
+    `${htmlEscape(draft.vendor || draft.description || "Receipt")} · <b>${rupiah(draft.amount)}</b>`,
+    `Category: <b>${htmlEscape(draft.category || "Other")}</b>`,
+    `Payer: <b>${htmlEscape(draft.payer || "TBD")}</b> · ${htmlEscape(split || "Shared by Units")} · ${htmlEscape(draft.payment || "Cash")}`
   ];
-  if (ocr) lines.push(`OCR: ${ocrStatusText(ocr)}`);
-  lines.push(
-    "",
-    "Tap the keyboard buttons below, or type:",
-    `<code>/set ${draft.id} paid TJ split units payment Cash</code>`,
-    "<code>/set paid EK split 50/50 payment QRIS</code>",
-    `<code>/confirm ${draft.id}</code>`
-  );
-  return lines.join("\n");
+  const details = [
+    `Draft id: ${draft.id}`,
+    `OCR: ${ocr ? ocrStatusText(ocr) : draft.ocrStatus || "-"}`,
+    `TJ food: ${rupiah(draft.foodTJAmount)}`,
+    `EK food: ${rupiah(draft.foodEKAmount)}`,
+    `Shared food: ${rupiah(draft.foodSharedAmount)}`,
+    `Tax/service: ${rupiah(draft.taxServiceAmount)}`,
+    "Tap category first. For meals: tap /meal, then tap TJ food/EK food/shared/tax and type the amount.",
+    `/set ${draft.id} paid TJ split units payment Cash`,
+    `/confirm ${draft.id}`
+  ];
+  return `${summary.join("\n")}\n<blockquote expandable>${details.map(htmlEscape).join("\n")}</blockquote>`;
 }
 
 function telegramResponse(text, extra = {}) {
@@ -614,6 +678,18 @@ async function updateDraft(tripId, expenseId, patch) {
   if (!snap.exists) return null;
   const data = snap.data();
   if (data.status === "confirmed") return { id: snap.id, ...data, alreadyConfirmed: true };
+  const merged = { ...data, ...patch };
+  const shouldRecalculate = [
+    "foodTJAmount",
+    "foodEKAmount",
+    "foodSharedAmount",
+    "taxServiceAmount",
+    "customTJAmount",
+    "customEKAmount",
+    "billSplitMode",
+    "billIncludesTaxService"
+  ].some((key) => Object.prototype.hasOwnProperty.call(patch, key));
+  if (shouldRecalculate) patch.amount = expenseTotal(merged);
   await ref.set({ ...patch, updatedAt: nowField() }, { merge: true });
   const updated = await ref.get();
   return { id: updated.id, ...updated.data() };
@@ -641,6 +717,124 @@ function parseSetPatch(args) {
     }
   }
   return patch;
+}
+
+function categoryUpdate(value) {
+  const normalized = clean(value).toLowerCase();
+  return CATEGORY_ALIASES[normalized] || {
+    food: "Food & Drinks",
+    fuel: "Fuel/Diesel",
+    toll: "Toll/e-Money",
+    ferry: "Ferry",
+    hotel: "Hotel",
+    parking: "Parking",
+    other: "Other"
+  }[normalized] || "Other";
+}
+
+function mealAmountPatch(field, amount) {
+  const base = {
+    category: "Food & Drinks",
+    split: "Custom",
+    billSplitMode: "Meal/order split",
+    billIncludesTaxService: "Yes"
+  };
+  if (field === "tjfood") return { ...base, foodTJAmount: amount };
+  if (field === "ekfood") return { ...base, foodEKAmount: amount };
+  if (field === "shared") return { ...base, foodSharedAmount: amount };
+  if (field === "tax") return { ...base, taxServiceAmount: amount };
+  return base;
+}
+
+function pendingRef(tripId, user) {
+  return tripRef(tripId).collection("telegramStates").doc(String(user?.id || "unknown"));
+}
+
+async function setPendingAmount(tripId, user, field, expenseId) {
+  await pendingRef(tripId, user).set({
+    type: "mealAmount",
+    field,
+    expenseId,
+    updatedAt: nowField()
+  }, { merge: true });
+}
+
+async function consumePendingAmount(tripId, user, text, member) {
+  if (!user?.id || text.startsWith("/")) return null;
+  const ref = pendingRef(tripId, user);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const state = snap.data();
+  if (state.type !== "mealAmount") return null;
+  const amount = num(text);
+  if (!amount) return telegramResponse("Type the amount as digits, e.g. <code>150000</code>.", {
+    reply_markup: { force_reply: true, input_field_placeholder: "150000" }
+  });
+  await ref.delete();
+  const expenseId = state.expenseId || (await findLatestDraftExpense(tripId, member))?.id;
+  if (!expenseId) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  const updated = await updateDraft(tripId, expenseId, mealAmountPatch(state.field, amount));
+  if (!updated) return `No expense found for <code>${expenseId}</code>.`;
+  return telegramResponse([
+    "Meal amount saved.",
+    ocrDraftText(updated)
+  ].join("\n"), { reply_markup: ocrMealKeyboard() });
+}
+
+async function setCategoryDraft(tripId, args, member) {
+  const category = categoryUpdate(args.join(" ") || "Other");
+  const draft = await findLatestDraftExpense(tripId, member);
+  if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  const patch = { category };
+  if (category !== "Food & Drinks") {
+    patch.billSplitMode = "Off";
+    if (draft.split === "Custom") patch.split = "Shared by Units";
+  }
+  const updated = await updateDraft(tripId, draft.id, patch);
+  const keyboard = category === "Food & Drinks" ? ocrMealKeyboard() : ocrGeneralKeyboard();
+  return telegramResponse([
+    `Category set to <b>${htmlEscape(category)}</b>.`,
+    ocrDraftText(updated)
+  ].join("\n"), { reply_markup: keyboard });
+}
+
+async function enableMealSplit(tripId, member) {
+  const draft = await findLatestDraftExpense(tripId, member);
+  if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  const updated = await updateDraft(tripId, draft.id, {
+    category: "Food & Drinks",
+    split: "Custom",
+    billSplitMode: "Meal/order split",
+    billIncludesTaxService: "Yes"
+  });
+  return telegramResponse([
+    "Meal split enabled.",
+    "Tap TJ food, EK food, Shared, or Tax/service, then type the amount.",
+    ocrDraftText(updated)
+  ].join("\n"), { reply_markup: ocrMealKeyboard() });
+}
+
+async function promptMealAmount(tripId, user, member, field, args) {
+  const draft = await findLatestDraftExpense(tripId, member);
+  if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  const typedAmount = num(args[0]);
+  if (typedAmount) {
+    const updated = await updateDraft(tripId, draft.id, mealAmountPatch(field, typedAmount));
+    return telegramResponse([
+      "Meal amount saved.",
+      ocrDraftText(updated)
+    ].join("\n"), { reply_markup: ocrMealKeyboard() });
+  }
+  await setPendingAmount(tripId, user, field, draft.id);
+  const label = {
+    tjfood: "TJ food",
+    ekfood: "EK food",
+    shared: "shared food",
+    tax: "tax/service"
+  }[field];
+  return telegramResponse(`Type amount for <b>${label}</b>. Example: <code>150000</code>`, {
+    reply_markup: { force_reply: true, input_field_placeholder: "150000" }
+  });
 }
 
 async function setDraftExpense(tripId, args, member) {
@@ -832,6 +1026,8 @@ async function handleCommand(tripId, message) {
   const member = await getMemberByTelegram(tripId, user);
   const [commandRaw, ...args] = text.split(/\s+/);
   const command = commandRaw.toLowerCase().replace(/@[\w_]+$/, "");
+  const pendingResult = await consumePendingAmount(tripId, user, text, member);
+  if (pendingResult) return pendingResult;
 
   if (command === "/start" || command === "/help") {
     return helpText();
@@ -875,7 +1071,32 @@ async function handleCommand(tripId, message) {
 
   if (command === "/set" || command === "/editdraft") {
     const result = await setDraftExpense(tripId, args, member);
-    return telegramResponse(result, { reply_markup: ocrCommandKeyboard() });
+    return telegramResponse(result, { reply_markup: ocrGeneralKeyboard() });
+  }
+
+  if (command === "/cat" || command === "/category") {
+    return setCategoryDraft(tripId, args, member);
+  }
+
+  if (command === "/meal") {
+    return enableMealSplit(tripId, member);
+  }
+
+  if (command === "/tjfood" || command === "/ekfood" || command === "/shared" || command === "/tax") {
+    return promptMealAmount(tripId, user, member, command.slice(1), args);
+  }
+
+  if (command === "/notax") {
+    const draft = await findLatestDraftExpense(tripId, member);
+    if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+    const updated = await updateDraft(tripId, draft.id, {
+      billIncludesTaxService: "No",
+      taxServiceAmount: 0
+    });
+    return telegramResponse([
+      "Tax/service removed.",
+      ocrDraftText(updated)
+    ].join("\n"), { reply_markup: ocrMealKeyboard() });
   }
 
   if (command === "/hidekeys" || command === "/hidekeyboard") {
