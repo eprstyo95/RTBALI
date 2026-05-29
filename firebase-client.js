@@ -3,9 +3,10 @@
 
   const DEFAULT_CONFIG_PATH = "firebase-config.json";
   const LOCAL_CONFIG_KEY = "rtbaliFirebaseConfig";
+  const PRE_PULL_BACKUP_KEY = "rtbaliBeforeCloudPull";
   const DEFAULT_API_BASE = "https://asia-southeast2-rtbali.cloudfunctions.net/api";
   const DEFAULT_TRIP_ID = "rtbali";
-  const AUTO_MERGE_INTERVAL_MS = 60000;
+  const AUTO_MERGE_INTERVAL_MS = 60 * 60 * 1000;
 
   function ready(fn) {
     if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", fn);
@@ -119,6 +120,22 @@
     return payload;
   }
 
+  function hasFullDashboardDb(db) {
+    return Boolean(
+      db &&
+      Array.isArray(db.tripPlans) && db.tripPlans.length &&
+      Array.isArray(db.accommodations) &&
+      Array.isArray(db.checklist) &&
+      Array.isArray(db.categoryDetails)
+    );
+  }
+
+  function backupBeforeCloudPull() {
+    try {
+      localStorage.setItem(PRE_PULL_BACKUP_KEY, JSON.stringify(window.RTBALI.getDb()));
+    } catch (_) {}
+  }
+
   async function pushDb(config) {
     status("Pushing...");
     const db = window.RTBALI.getDb();
@@ -134,8 +151,14 @@
     status("Pulling...");
     const payload = await request(config, `/export?tripId=${encodeURIComponent(config.tripId)}`);
     if (!payload?.db) throw new Error("No database returned");
-    window.RTBALI.replaceDb(payload.db, "Pulled from Firebase");
-    status("Pulled from Firebase");
+    backupBeforeCloudPull();
+    if (hasFullDashboardDb(payload.db)) {
+      window.RTBALI.replaceDb(payload.db, "Pulled full cloud database");
+      status("Pulled full cloud database");
+      return;
+    }
+    window.RTBALI.mergeExpenses(payload.db.expenses || [], "Cloud only had expenses; merged safely");
+    status("Cloud only had expenses, so I merged instead of replacing");
   }
 
   async function mergeExpenses(config) {

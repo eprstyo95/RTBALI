@@ -102,8 +102,12 @@ other devices. Opening the link saves the cloud config once, then the app remove
 the secret from the address bar. Treat that link like a password.
 
 When cloud setup exists, the dashboard automatically merges Telegram/Firebase
-expenses on load and refreshes them about once per minute. Use **Merge expenses**
+expenses on load and refreshes them about once per hour. Use **Merge expenses**
 for an immediate manual refresh.
+
+If the dashboard ever looks empty after **Pull cloud**, click **Reset** to reload
+the built-in trip seed, then click **Merge expenses**. Pull now refuses to replace
+the full dashboard when Firebase only contains expense rows.
 
 ### Telegram commands
 
