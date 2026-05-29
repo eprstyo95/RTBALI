@@ -809,28 +809,23 @@ async function handleCallback(tripId, callbackQuery) {
   const chatId = message.chat?.id;
   const messageId = message.message_id;
   const user = callbackQuery.from || {};
-  logger.info("Telegram callback received", {
-    data,
-    chatId: String(chatId || ""),
-    messageId: messageId || "",
-    from: user.id || ""
-  });
+  logger.info(`Telegram callback received data=${data} chat=${String(chatId || "")} message=${messageId || ""} from=${user.id || ""}`);
   if (!chatId) return;
   if (ALLOWED_CHAT_ID && String(chatId) !== String(ALLOWED_CHAT_ID)) {
     await answerCallbackQuery(callbackQuery.id, "This bot is locked to a different group.");
     return;
   }
 
-  await answerCallbackQuery(callbackQuery.id, "OK");
-
   if (data.startsWith("exp:")) {
     const [, action, expenseId, value] = data.split(":");
     if (!expenseId) return;
 
     if (action === "c") {
+      await answerCallbackQuery(callbackQuery.id, "Confirming...");
       const member = await getMemberByTelegram(tripId, user);
       const result = await confirmExpense(tripId, expenseId, member);
-      await editTelegramMessage(chatId, messageId, result.message);
+      const editResponse = await editTelegramMessage(chatId, messageId, result.message);
+      if (!editResponse?.ok) await sendTelegram(chatId, result.message);
       return;
     }
 
@@ -844,22 +839,37 @@ async function handleCallback(tripId, callbackQuery) {
     }
 
     if (!patch) {
+      await answerCallbackQuery(callbackQuery.id, "Unknown action");
       await sendTelegram(chatId, "Unknown draft action.");
       return;
     }
 
     const draft = await updateDraftFromCallback(tripId, expenseId, patch);
     if (!draft) {
-      await editTelegramMessage(chatId, messageId, `No expense found for <code>${expenseId}</code>.`);
+      await answerCallbackQuery(callbackQuery.id, "Draft not found");
+      await sendTelegram(chatId, `No expense found for <code>${expenseId}</code>.`);
       return;
     }
     if (draft.alreadyConfirmed) {
-      await editTelegramMessage(chatId, messageId, `Already confirmed <code>${expenseId}</code>.`);
+      await answerCallbackQuery(callbackQuery.id, "Already confirmed");
+      await sendTelegram(chatId, `Already confirmed <code>${expenseId}</code>.`);
       return;
     }
-    await editTelegramMessage(chatId, messageId, ocrDraftText(draft), { reply_markup: ocrDraftKeyboard(expenseId) });
+    const label = action === "p"
+      ? `Payer set to ${draft.payer}.`
+      : action === "s"
+        ? `Split set to ${draft.split}.`
+        : `Payment set to ${draft.payment}.`;
+    await answerCallbackQuery(callbackQuery.id, label);
+    const text = ocrDraftText(draft);
+    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: ocrDraftKeyboard(expenseId) });
+    if (!editResponse?.ok) {
+      await sendTelegram(chatId, `${label}\n\n${text}`, { reply_markup: ocrDraftKeyboard(expenseId) });
+    }
     return;
   }
+
+  await answerCallbackQuery(callbackQuery.id, "OK");
 
   if (data === "menu:help") {
     await sendTelegram(chatId, helpText(), { reply_markup: menuKeyboard() });
