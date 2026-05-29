@@ -156,6 +156,27 @@ async function sendTelegram(chatId, text, extra = {}) {
   return response;
 }
 
+async function editTelegramMessage(chatId, messageId, text, extra = {}) {
+  if (!TELEGRAM_TOKEN || !chatId || !messageId) return null;
+  const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/editMessageText`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      message_id: messageId,
+      text,
+      parse_mode: "HTML",
+      disable_web_page_preview: true,
+      ...extra
+    })
+  });
+  if (!response.ok) {
+    const body = await response.text();
+    logger.error("Telegram editMessageText failed", body);
+  }
+  return response;
+}
+
 async function answerCallbackQuery(callbackQueryId, text = "") {
   if (!TELEGRAM_TOKEN || !callbackQueryId) return null;
   const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/answerCallbackQuery`, {
@@ -786,7 +807,14 @@ async function handleCallback(tripId, callbackQuery) {
   const data = callbackQuery.data || "";
   const message = callbackQuery.message || {};
   const chatId = message.chat?.id;
+  const messageId = message.message_id;
   const user = callbackQuery.from || {};
+  logger.info("Telegram callback received", {
+    data,
+    chatId: String(chatId || ""),
+    messageId: messageId || "",
+    from: user.id || ""
+  });
   if (!chatId) return;
   if (ALLOWED_CHAT_ID && String(chatId) !== String(ALLOWED_CHAT_ID)) {
     await answerCallbackQuery(callbackQuery.id, "This bot is locked to a different group.");
@@ -802,7 +830,7 @@ async function handleCallback(tripId, callbackQuery) {
     if (action === "c") {
       const member = await getMemberByTelegram(tripId, user);
       const result = await confirmExpense(tripId, expenseId, member);
-      await sendTelegram(chatId, result.message);
+      await editTelegramMessage(chatId, messageId, result.message);
       return;
     }
 
@@ -822,14 +850,14 @@ async function handleCallback(tripId, callbackQuery) {
 
     const draft = await updateDraftFromCallback(tripId, expenseId, patch);
     if (!draft) {
-      await sendTelegram(chatId, `No expense found for <code>${expenseId}</code>.`);
+      await editTelegramMessage(chatId, messageId, `No expense found for <code>${expenseId}</code>.`);
       return;
     }
     if (draft.alreadyConfirmed) {
-      await sendTelegram(chatId, `Already confirmed <code>${expenseId}</code>.`);
+      await editTelegramMessage(chatId, messageId, `Already confirmed <code>${expenseId}</code>.`);
       return;
     }
-    await sendTelegram(chatId, ocrDraftText(draft), { reply_markup: ocrDraftKeyboard(expenseId) });
+    await editTelegramMessage(chatId, messageId, ocrDraftText(draft), { reply_markup: ocrDraftKeyboard(expenseId) });
     return;
   }
 
