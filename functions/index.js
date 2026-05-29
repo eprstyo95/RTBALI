@@ -217,6 +217,60 @@ function menuKeyboard() {
   };
 }
 
+function ocrDraftKeyboard(expenseId) {
+  return {
+    inline_keyboard: [
+      [
+        { text: "Paid by TJ", callback_data: `exp:p:${expenseId}:TJ` },
+        { text: "Paid by EK", callback_data: `exp:p:${expenseId}:EK` }
+      ],
+      [
+        { text: "Paid by P3", callback_data: `exp:p:${expenseId}:P3` },
+        { text: "Paid by P4", callback_data: `exp:p:${expenseId}:P4` }
+      ],
+      [
+        { text: "Shared units", callback_data: `exp:s:${expenseId}:units` },
+        { text: "50/50", callback_data: `exp:s:${expenseId}:5050` }
+      ],
+      [
+        { text: "TJ only", callback_data: `exp:s:${expenseId}:tj` },
+        { text: "EK only", callback_data: `exp:s:${expenseId}:ek` }
+      ],
+      [
+        { text: "Cash", callback_data: `exp:m:${expenseId}:cash` },
+        { text: "QRIS", callback_data: `exp:m:${expenseId}:qris` },
+        { text: "Card", callback_data: `exp:m:${expenseId}:card` }
+      ],
+      [
+        { text: "Confirm", callback_data: `exp:c:${expenseId}` }
+      ]
+    ]
+  };
+}
+
+function ocrDraftText(draft, ocr = null) {
+  const lines = [
+    "Receipt OCR draft saved.",
+    `Draft id: <code>${draft.id}</code>`,
+    `Vendor: ${draft.vendor || draft.description || "Receipt"}`,
+    `Amount guess: <b>${rupiah(draft.amount)}</b>`,
+    `Payer: <b>${draft.payer || "TBD"}</b>`,
+    `Split: <b>${draft.billSplitMode !== "Off" ? draft.billSplitMode : draft.split}</b>`,
+    `Payment: <b>${draft.payment || "Cash"}</b>`
+  ];
+  if (ocr) lines.push(`OCR: ${ocrStatusText(ocr)}`);
+  lines.push(
+    "",
+    "Use the buttons to adjust, then confirm.",
+    `Manual confirm: <code>/confirm ${draft.id}</code>`
+  );
+  return lines.join("\n");
+}
+
+function telegramResponse(text, extra = {}) {
+  return { text, extra };
+}
+
 async function getMemberByTelegram(tripId, user) {
   if (!user?.id) return null;
   const snap = await tripRef(tripId).collection("members").doc(String(user.id)).get();
@@ -477,6 +531,30 @@ async function confirmExpense(tripId, expenseId, member) {
   };
 }
 
+function splitUpdate(value) {
+  if (value === "5050") return { split: "Equal 50/50", billSplitMode: "Off" };
+  if (value === "tj") return { split: "TJ only", billSplitMode: "Off" };
+  if (value === "ek") return { split: "EK only", billSplitMode: "Off" };
+  return { split: "Shared by Units", billSplitMode: "Off" };
+}
+
+function paymentUpdate(value) {
+  if (value === "qris") return "QRIS";
+  if (value === "card") return "Debit/Credit";
+  return "Cash";
+}
+
+async function updateDraftFromCallback(tripId, expenseId, patch) {
+  const ref = tripRef(tripId).collection("expenses").doc(expenseId);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const data = snap.data();
+  if (data.status === "confirmed") return { id: snap.id, ...data, alreadyConfirmed: true };
+  await ref.set({ ...patch, updatedAt: nowField() }, { merge: true });
+  const updated = await ref.get();
+  return { id: updated.id, ...updated.data() };
+}
+
 async function downloadTelegramFile(fileId) {
   const metaResponse = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getFile?file_id=${fileId}`);
   const meta = await metaResponse.json();
@@ -590,16 +668,7 @@ async function handlePhoto(tripId, message, member) {
     updatedAt: nowField()
   });
   await saveExpense(tripId, draft);
-  return [
-    "Receipt OCR draft saved.",
-    `Draft id: <code>${draft.id}</code>`,
-    `Vendor: ${draft.vendor}`,
-    `Amount guess: <b>${rupiah(draft.amount)}</b>`,
-    `OCR: ${ocrStatusText(ocr)}`,
-    "Confirm by replying:",
-    `<code>/confirm ${draft.id}</code>`,
-    "or just <code>/confirm</code> for your latest draft."
-  ].join("\n");
+  return telegramResponse(ocrDraftText(draft, ocr), { reply_markup: ocrDraftKeyboard(draft.id) });
 }
 
 async function saveReceiptDraftFromBuffer(tripId, buffer, metadata = {}) {
@@ -726,6 +795,44 @@ async function handleCallback(tripId, callbackQuery) {
 
   await answerCallbackQuery(callbackQuery.id, "OK");
 
+  if (data.startsWith("exp:")) {
+    const [, action, expenseId, value] = data.split(":");
+    if (!expenseId) return;
+
+    if (action === "c") {
+      const member = await getMemberByTelegram(tripId, user);
+      const result = await confirmExpense(tripId, expenseId, member);
+      await sendTelegram(chatId, result.message);
+      return;
+    }
+
+    let patch = null;
+    if (action === "p") {
+      patch = { payer: normalizeMemberName(value) };
+    } else if (action === "s") {
+      patch = splitUpdate(value);
+    } else if (action === "m") {
+      patch = { payment: paymentUpdate(value) };
+    }
+
+    if (!patch) {
+      await sendTelegram(chatId, "Unknown draft action.");
+      return;
+    }
+
+    const draft = await updateDraftFromCallback(tripId, expenseId, patch);
+    if (!draft) {
+      await sendTelegram(chatId, `No expense found for <code>${expenseId}</code>.`);
+      return;
+    }
+    if (draft.alreadyConfirmed) {
+      await sendTelegram(chatId, `Already confirmed <code>${expenseId}</code>.`);
+      return;
+    }
+    await sendTelegram(chatId, ocrDraftText(draft), { reply_markup: ocrDraftKeyboard(expenseId) });
+    return;
+  }
+
   if (data === "menu:help") {
     await sendTelegram(chatId, helpText(), { reply_markup: menuKeyboard() });
     return;
@@ -795,8 +902,12 @@ exports.telegramWebhook = onRequest({ region: "asia-southeast2", timeoutSeconds:
     }
     const message = update.message || update.edited_message;
     if (!message?.chat?.id) return res.json({ ok: true });
-    const text = await handleCommand(TRIP_ID, message);
-    if (text) await sendTelegram(message.chat.id, text);
+    const result = await handleCommand(TRIP_ID, message);
+    if (typeof result === "string" && result) {
+      await sendTelegram(message.chat.id, result);
+    } else if (result?.text) {
+      await sendTelegram(message.chat.id, result.text, result.extra || {});
+    }
     return res.json({ ok: true });
   } catch (error) {
     logger.error(error);
