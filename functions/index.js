@@ -1278,7 +1278,7 @@ exports.telegramWebhook = onRequest({ region: "asia-southeast2", timeoutSeconds:
 function cors(req, res) {
   res.set("access-control-allow-origin", "*");
   res.set("access-control-allow-headers", "content-type,x-rtbali-sync-key");
-  res.set("access-control-allow-methods", "GET,POST,OPTIONS");
+  res.set("access-control-allow-methods", "GET,POST,DELETE,OPTIONS");
   if (req.method === "OPTIONS") {
     res.status(204).send("");
     return true;
@@ -1321,6 +1321,24 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
     if (req.method === "GET" && path === "expenses") {
       const snap = await tripRef(tripId).collection("expenses").orderBy("createdAt", "desc").limit(500).get();
       return res.json({ expenses: snap.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) })) });
+    }
+
+    if ((req.method === "POST" || req.method === "DELETE") && path === "expense/delete") {
+      const expenseId = clean(req.query.id || req.body?.id);
+      if (!expenseId) return res.status(400).json({ error: "Missing expense id" });
+      const expenseRef = tripRef(tripId).collection("expenses").doc(expenseId);
+      const snap = await expenseRef.get();
+      const expense = snap.exists ? snap.data() : null;
+      await expenseRef.delete();
+      if (expense?.receiptId) {
+        await tripRef(tripId).collection("receipts").doc(expense.receiptId).set({
+          status: "deleted",
+          deletedExpenseId: expenseId,
+          updatedAt: nowField()
+        }, { merge: true });
+      }
+      await tripRef(tripId).set({ updatedAt: nowField() }, { merge: true });
+      return res.json({ ok: true, deletedExpenseId: expenseId, existed: Boolean(expense) });
     }
 
     if (req.method === "GET" && path === "settlement") {

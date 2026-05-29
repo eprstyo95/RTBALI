@@ -168,6 +168,16 @@
     status(`Merged ${(payload.expenses || []).length} cloud expenses`);
   }
 
+  async function deleteExpense(config, expenseId) {
+    if (!expenseId) throw new Error("Missing expense id");
+    status("Deleting cloud expense...");
+    await request(config, `/expense/delete?tripId=${encodeURIComponent(config.tripId)}&id=${encodeURIComponent(expenseId)}`, {
+      method: "POST",
+      body: JSON.stringify({ id: expenseId })
+    });
+    status("Cloud expense deleted");
+  }
+
   async function autoMergeExpenses(config) {
     try {
       const payload = await request(config, `/expenses?tripId=${encodeURIComponent(config.tripId)}`);
@@ -238,6 +248,15 @@
         prompt("Copy setup link", link);
       }
     }));
+
+    window.RTBALICloud = {
+      pushDb: () => pushDb(config),
+      pullDb: () => pullDb(config),
+      mergeExpenses: () => mergeExpenses(config),
+      deleteExpense: (expenseId) => deleteExpense(config, expenseId)
+    };
+
+    if (window.RTBALI?.toast) window.RTBALI.toast("Cloud quick actions ready");
 
     autoMergeExpenses(config);
     setInterval(() => autoMergeExpenses(config), AUTO_MERGE_INTERVAL_MS);

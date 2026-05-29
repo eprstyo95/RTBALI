@@ -279,6 +279,9 @@ td:last-child{width:1%;white-space:nowrap}
 tfoot td{background:var(--card2);font-weight:700;border-top:2px solid var(--line2)}
 .linkbtn{border:0;background:transparent;color:var(--teal-d);font-weight:600;cursor:pointer;font-size:13px;padding:4px 6px;border-radius:7px}
 .linkbtn:hover{background:var(--teal-soft)}
+.linkbtn.danger{color:var(--bad)}
+.linkbtn.danger:hover{background:var(--bad-soft)}
+.row-actions{display:flex;gap:6px;align-items:center;justify-content:flex-end;white-space:nowrap}
 
 /* cost plan settings */
 .set-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
@@ -728,6 +731,9 @@ function delegate(e){
   else if (act==="cycle") cycleTask(a.dataset.id);
   else if (act==="goto") setTab(a.dataset.tab);
   else if (act==="sort") sortTable(a.dataset.table, a.dataset.key, a.dataset.numeric==="1");
+  else if (act==="quickDeleteExpense") quickDeleteExpense(a.dataset.id);
+  else if (act==="cloudPush") cloudPushQuick();
+  else if (act==="cloudMergeExpenses") cloudMergeExpensesQuick();
 }
 
 /* ============================================================
@@ -1308,12 +1314,17 @@ function renderExpenses(){
     <td>${payerPill(e.payer)}</td>
     <td>${escapeHtml(e.split||"—")}</td>
     <td class="num">${fmt.format(expenseTotal(e))}</td>
-    <td><button class="linkbtn" data-act="edit" data-type="expense" data-id="${e.id}">Edit</button></td>
+    <td><div class="row-actions">
+      <button class="linkbtn" data-act="edit" data-type="expense" data-id="${e.id}">Edit</button>
+      <button class="linkbtn danger" data-act="quickDeleteExpense" data-id="${e.id}" title="Delete locally and from cloud when configured">Delete</button>
+    </div></td>
   </tr>`).join("") : `<tr><td colspan="7">${empty("No expenses match.","wallet")}</td></tr>`;
   $("pane-expenses").innerHTML = `
     <div class="panel">
       <div class="sec-head"><h2 class="serif">${icon("wallet")} Expense ledger</h2>
         <div class="right"><span class="meta">${rows.length}/${db.expenses.length} shown · total ${fmt.format(t.actual)}</span>
+          <button class="btn ghost" data-act="cloudMergeExpenses">${icon("reset")} Merge cloud</button>
+          <button class="btn ghost" data-act="cloudPush">${icon("upload")} Push cloud</button>
           <button class="btn primary" data-act="add" data-type="expense">${icon("plus")} Add expense</button></div></div>
       <div class="table-wrap"><table>
         <thead><tr>${th("Date","date","exp")}${th("Category","category","exp")}${th("Description","description","exp")}
@@ -1617,6 +1628,30 @@ function deleteActive(){
   const c = activeEdit.schema.collection;
   db[c] = db[c].filter(x=>x.id!==activeEdit.id);
   persist(); $("dialog").close(); renderAll(); toast("Record deleted");
+}
+function quickDeleteExpense(id){
+  if(!id) return;
+  const exp = db.expenses.find(e=>e.id===id);
+  if(!exp) return toast("Expense not found");
+  const label = exp.description || exp.vendor || exp.category || id;
+  if(!confirm(`Delete expense?\n\n${label}\n${fmt.format(expenseTotal(exp))}`)) return;
+  db.expenses = db.expenses.filter(e=>e.id!==id);
+  persist();
+  renderAll();
+  toast("Expense deleted locally");
+  if(window.RTBALICloud?.deleteExpense){
+    window.RTBALICloud.deleteExpense(id)
+      .then(()=>toast("Expense deleted from cloud"))
+      .catch(err=>toast(`Cloud delete failed: ${err.message}`));
+  }
+}
+function cloudPushQuick(){
+  if(!window.RTBALICloud?.pushDb) return toast("Cloud setup needed");
+  window.RTBALICloud.pushDb().catch(err=>toast(`Push failed: ${err.message}`));
+}
+function cloudMergeExpensesQuick(){
+  if(!window.RTBALICloud?.mergeExpenses) return toast("Cloud setup needed");
+  window.RTBALICloud.mergeExpenses().catch(err=>toast(`Merge failed: ${err.message}`));
 }
 function cycleTask(id){
   const t = db.checklist.find(x=>x.id===id); if(!t) return;
