@@ -207,7 +207,9 @@ function helpText() {
     "",
     "<b>Receipt OCR</b>",
     "Send a receipt photo, or send it with caption /receipt if Telegram privacy mode is on.",
-    "Then confirm the draft with /confirm.",
+    "Then edit the latest draft with:",
+    "<code>/set paid TJ split 50/50 payment QRIS</code>",
+    "Confirm with <code>/confirm</code>.",
     "",
     "<b>Member setup</b>",
     "<code>/link CODE TJ|EK|P3|P4</code>",
@@ -282,8 +284,11 @@ function ocrDraftText(draft, ocr = null) {
   if (ocr) lines.push(`OCR: ${ocrStatusText(ocr)}`);
   lines.push(
     "",
-    "Use the buttons to adjust, then confirm.",
-    `Manual confirm: <code>/confirm ${draft.id}</code>`
+    "Reliable commands:",
+    `<code>/set ${draft.id} paid TJ split units payment Cash</code>`,
+    "<code>/set paid EK split 50/50 payment QRIS</code>",
+    `<code>/confirm ${draft.id}</code>`,
+    "Buttons are optional."
   );
   return lines.join("\n");
 }
@@ -553,19 +558,23 @@ async function confirmExpense(tripId, expenseId, member) {
 }
 
 function splitUpdate(value) {
-  if (value === "5050") return { split: "Equal 50/50", billSplitMode: "Off" };
-  if (value === "tj") return { split: "TJ only", billSplitMode: "Off" };
-  if (value === "ek") return { split: "EK only", billSplitMode: "Off" };
+  const normalized = clean(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (["5050", "50", "equal"].includes(normalized)) return { split: "Equal 50/50", billSplitMode: "Off" };
+  if (["tj", "tjonly"].includes(normalized)) return { split: "TJ only", billSplitMode: "Off" };
+  if (["ek", "ekonly"].includes(normalized)) return { split: "EK only", billSplitMode: "Off" };
   return { split: "Shared by Units", billSplitMode: "Off" };
 }
 
 function paymentUpdate(value) {
-  if (value === "qris") return "QRIS";
-  if (value === "card") return "Debit/Credit";
+  const normalized = clean(value).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (normalized === "qris") return "QRIS";
+  if (["card", "debit", "credit", "debitcredit"].includes(normalized)) return "Debit/Credit";
+  if (["transfer", "tf"].includes(normalized)) return "Transfer";
+  if (["emoney", "etoll"].includes(normalized)) return "e-Money";
   return "Cash";
 }
 
-async function updateDraftFromCallback(tripId, expenseId, patch) {
+async function updateDraft(tripId, expenseId, patch) {
   const ref = tripRef(tripId).collection("expenses").doc(expenseId);
   const snap = await ref.get();
   if (!snap.exists) return null;
@@ -574,6 +583,55 @@ async function updateDraftFromCallback(tripId, expenseId, patch) {
   await ref.set({ ...patch, updatedAt: nowField() }, { merge: true });
   const updated = await ref.get();
   return { id: updated.id, ...updated.data() };
+}
+
+async function updateDraftFromCallback(tripId, expenseId, patch) {
+  return updateDraft(tripId, expenseId, patch);
+}
+
+function parseSetPatch(args) {
+  const patch = {};
+  for (let i = 0; i < args.length; i += 1) {
+    const key = clean(args[i]).toLowerCase();
+    const value = clean(args[i + 1]);
+    if (!value) continue;
+    if (["paid", "payer", "by", "bayar"].includes(key)) {
+      patch.payer = normalizeMemberName(value);
+      i += 1;
+    } else if (key === "split") {
+      Object.assign(patch, splitUpdate(value));
+      i += 1;
+    } else if (["payment", "pay", "method"].includes(key)) {
+      patch.payment = paymentUpdate(value);
+      i += 1;
+    }
+  }
+  return patch;
+}
+
+async function setDraftExpense(tripId, args, member) {
+  let expenseId = args[0] && /^ocr-exp-|^tg-exp-|^web-exp-/i.test(args[0]) ? args[0] : "";
+  const setArgs = expenseId ? args.slice(1) : args;
+  const patch = parseSetPatch(setArgs);
+  if (!Object.keys(patch).length) {
+    return "Use <code>/set paid TJ split 50/50 payment QRIS</code>";
+  }
+  if (!expenseId) {
+    const draft = await findLatestDraftExpense(tripId, member);
+    expenseId = draft?.id || "";
+  }
+  if (!expenseId) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+
+  const updated = await updateDraft(tripId, expenseId, patch);
+  if (!updated) return `No expense found for <code>${expenseId}</code>.`;
+  if (updated.alreadyConfirmed) return `Already confirmed <code>${expenseId}</code>.`;
+  return [
+    "Draft updated.",
+    ocrDraftText(updated),
+    "",
+    "Confirm when ready:",
+    "<code>/confirm</code>"
+  ].join("\n");
 }
 
 async function downloadTelegramFile(fileId) {
@@ -779,6 +837,10 @@ async function handleCommand(tripId, message) {
   if (command === "/confirm") {
     const result = await confirmExpense(tripId, args[0], member);
     return result.message;
+  }
+
+  if (command === "/set" || command === "/editdraft") {
+    return setDraftExpense(tripId, args, member);
   }
 
   if (command === "/receipt") {
