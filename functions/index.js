@@ -180,7 +180,8 @@ function helpText() {
     "<code>/expense food paid EK split custom customtj 150000 customek 90000</code>",
     "",
     "<b>Receipt OCR</b>",
-    "Send a receipt photo, then confirm the draft.",
+    "Send a receipt photo, or send it with caption /receipt if Telegram privacy mode is on.",
+    "Then confirm the draft with /confirm.",
     "",
     "<b>Member setup</b>",
     "<code>/link CODE TJ|EK|P3|P4</code>",
@@ -397,6 +398,80 @@ async function saveExpense(tripId, expense) {
   return expense;
 }
 
+async function findLatestDraftExpense(tripId, member) {
+  let query = tripRef(tripId).collection("expenses")
+    .where("status", "==", "draft");
+  if (member?.telegramUserId) {
+    query = query.where("createdByTelegramUserId", "==", member.telegramUserId);
+  }
+  query = query.orderBy("createdAt", "desc").limit(10);
+  const snap = await query.get();
+  if (snap.empty) return null;
+  const doc = snap.docs[0];
+  return { id: doc.id, ...doc.data() };
+}
+
+async function confirmExpense(tripId, expenseId, member) {
+  const requestedId = clean(expenseId);
+  if (/^EXPENSE_ID$/i.test(requestedId)) {
+    return {
+      ok: false,
+      message: "That is only a placeholder. Send a receipt photo first, then use the real draft ID, or just type <code>/confirm</code>."
+    };
+  }
+
+  const draft = requestedId
+    ? null
+    : await findLatestDraftExpense(tripId, member);
+  const idToConfirm = requestedId || draft?.id;
+  if (!idToConfirm) {
+    return {
+      ok: false,
+      message: "No draft expense found. Send a receipt photo first, then confirm the draft."
+    };
+  }
+
+  const ref = tripRef(tripId).collection("expenses").doc(idToConfirm);
+  const snap = await ref.get();
+  if (!snap.exists) {
+    return {
+      ok: false,
+      message: `No expense found for <code>${idToConfirm}</code>. Check the draft ID from the OCR message.`
+    };
+  }
+
+  const expense = snap.data();
+  if (expense.status === "confirmed") {
+    return {
+      ok: true,
+      message: `Already confirmed <code>${idToConfirm}</code>.`
+    };
+  }
+
+  await ref.set({
+    status: "confirmed",
+    confirmedAt: nowField(),
+    confirmedByTelegramUserId: member?.telegramUserId || "",
+    updatedAt: nowField()
+  }, { merge: true });
+
+  if (expense.receiptId) {
+    await tripRef(tripId).collection("receipts").doc(expense.receiptId).set({
+      status: "confirmed",
+      confirmedExpenseId: idToConfirm,
+      updatedAt: nowField()
+    }, { merge: true });
+  }
+
+  return {
+    ok: true,
+    message: [
+      `Confirmed <code>${idToConfirm}</code>.`,
+      `${expense.vendor || expense.description || "Expense"}: <b>${rupiah(expenseTotal(expense))}</b>`
+    ].join("\n")
+  };
+}
+
 async function downloadTelegramFile(fileId) {
   const metaResponse = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/getFile?file_id=${fileId}`);
   const meta = await metaResponse.json();
@@ -481,7 +556,9 @@ async function handlePhoto(tripId, message, member) {
     `Vendor: ${draft.vendor}`,
     `Amount guess: <b>${rupiah(draft.amount)}</b>`,
     `OCR: ${ocrText ? "text detected" : "no text detected"}`,
-    `Confirm with: <code>/confirm ${draft.id}</code>`
+    "Confirm by replying:",
+    `<code>/confirm ${draft.id}</code>`,
+    "or just <code>/confirm</code> for your latest draft."
   ].join("\n");
 }
 
@@ -557,14 +634,13 @@ async function handleCommand(tripId, message) {
   }
 
   if (command === "/confirm") {
-    const expenseId = args[0];
-    if (!expenseId) return "Use /confirm EXPENSE_ID";
-    await tripRef(tripId).collection("expenses").doc(expenseId).set({
-      status: "confirmed",
-      confirmedAt: nowField(),
-      updatedAt: nowField()
-    }, { merge: true });
-    return `Confirmed <code>${expenseId}</code>.`;
+    const result = await confirmExpense(tripId, args[0], member);
+    return result.message;
+  }
+
+  if (command === "/receipt") {
+    if (message.photo) return handlePhoto(tripId, message, member);
+    return "Send a receipt photo with caption <code>/receipt</code>.";
   }
 
   if (command === "/expense" || command === "/exp" || command === "/meal" || command === "/food" || command === "/makan") {
@@ -637,9 +713,11 @@ async function handleCallback(tripId, callbackQuery) {
     await sendTelegram(chatId, [
       "<b>Receipt OCR</b>",
       "Send a receipt photo to this group.",
+      "If the bot does not respond, send the photo again with caption <code>/receipt</code>.",
       "The bot creates a draft expense.",
       "Then confirm it with:",
-      "<code>/confirm EXPENSE_ID</code>"
+      "<code>/confirm</code>",
+      "or <code>/confirm ocr-exp-...</code> from the OCR draft message."
     ].join("\n"), { reply_markup: menuKeyboard() });
     return;
   }

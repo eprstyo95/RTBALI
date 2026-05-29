@@ -135,11 +135,15 @@ Detailed expense keys match the web ledger: `date`, `place`, `vendor`,
 `payment`, `desc`, `note`, `tjfood`, `ekfood`, `shared`, `tax`, `customtj`,
 `customek`, and `notax`.
 
-Send a receipt photo to create an OCR draft. Confirm it with:
+Send a receipt photo to create an OCR draft. If the bot does not respond in the
+group, resend the photo with caption `/receipt`; this works when Telegram bot
+privacy mode only forwards command messages. Confirm the latest draft with:
 
 ```text
-/confirm EXPENSE_ID
+/confirm
 ```
+
+You can also confirm a specific OCR draft with `/confirm ocr-exp-...`.
 
 When `firebase-config.json` exists, the web app also shows **OCR receipt**. Pick or
 take a receipt photo, then the backend stores the image, runs OCR, creates a draft
