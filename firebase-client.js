@@ -259,7 +259,12 @@
 
     if (window.RTBALI?.toast) window.RTBALI.toast("Cloud quick actions ready");
 
-    autoMergeExpenses(config);
+    // Pull full DB on startup so the app always opens with the latest cloud data
+    pullDb(config).catch(err => {
+      status(`Auto-pull failed: ${err.message}`);
+      // Fall back to just syncing expenses if full pull fails
+      autoMergeExpenses(config);
+    });
     setInterval(() => autoMergeExpenses(config), AUTO_MERGE_INTERVAL_MS);
   }
 
