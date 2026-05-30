@@ -17,6 +17,8 @@ const SYNC_KEY = process.env.RTBALI_SYNC_KEY || "";
 const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET || "";
 const ALLOWED_CHAT_ID = process.env.RTBALI_ALLOWED_CHAT_ID || "";
+const ACCOUNT_MEMBERS = ["TJ", "EK"];
+const DEFAULT_SPLIT_UNITS = { TJ: 2.5, EK: 2.5 };
 
 const CATEGORY_ALIASES = {
   meal: "Food & Drinks",
@@ -94,15 +96,19 @@ function num(text) {
 
 function normalizeMemberName(value) {
   const text = clean(value).toUpperCase();
-  if (["TJ", "EK"].includes(text)) return text;
-  if (["P3", "PERSON3", "PERSON 3", "3"].includes(text)) return "P3";
-  if (["P4", "PERSON4", "PERSON 4", "4"].includes(text)) return "P4";
-  return text || "UNMAPPED";
+  if (["TJ", "T", "EKO"].includes(text)) return "TJ";
+  if (["EK", "E"].includes(text)) return "EK";
+  return "";
 }
 
-function memberLabels(members = []) {
-  const labels = members.map((member) => member.member || member).filter(Boolean);
-  return labels.length ? labels : ["TJ", "EK", "P3", "P4"];
+function memberLabels() {
+  return [...ACCOUNT_MEMBERS];
+}
+
+function splitUnits(settings = {}) {
+  const tj = num(settings.tjSplitUnits) || DEFAULT_SPLIT_UNITS.TJ;
+  const ek = num(settings.ekSplitUnits) || DEFAULT_SPLIT_UNITS.EK;
+  return { TJ: tj, EK: ek, total: tj + ek };
 }
 
 function pickNumber(raw, keys) {
@@ -209,7 +215,6 @@ function helpText() {
     "",
     "<b>Manual expense</b>",
     "<code>/expense meal 220000 paid TJ split 50/50</code>",
-    "<code>/meal 220000 paid EK split order</code>",
     "<code>/meal paid TJ split order tjfood 120000 ekfood 80000 shared 50000 tax 30000</code>",
     "<code>/expense food paid EK split custom customtj 150000 customek 90000</code>",
     "",
@@ -220,7 +225,8 @@ function helpText() {
     "Confirm with <code>/confirm</code>.",
     "",
     "<b>Member setup</b>",
-    "<code>/link CODE TJ|EK|P3|P4</code>",
+    "<code>/link CODE TJ|EK</code>",
+    "Both phones can link to the same TJ/EK account.",
     "<code>/unlink</code>",
     "",
     "<b>Useful</b>",
@@ -254,10 +260,6 @@ function ocrDraftKeyboard(expenseId) {
       [
         { text: "Paid by TJ", callback_data: `exp:p:${expenseId}:TJ` },
         { text: "Paid by EK", callback_data: `exp:p:${expenseId}:EK` }
-      ],
-      [
-        { text: "Paid by P3", callback_data: `exp:p:${expenseId}:P3` },
-        { text: "Paid by P4", callback_data: `exp:p:${expenseId}:P4` }
       ],
       [
         { text: "Shared units", callback_data: `exp:s:${expenseId}:units` },
@@ -375,7 +377,7 @@ function ocrDraftText(draft, ocr = null) {
     "<b>Receipt draft saved</b>",
     `${htmlEscape(draft.vendor || draft.description || "Receipt")} · <b>${rupiah(draft.amount)}</b>`,
     `Category: <b>${htmlEscape(draft.category || "Other")}</b>`,
-    `Payer: <b>${htmlEscape(draft.payer || "TBD")}</b> · ${htmlEscape(split || "Shared by Units")} · ${htmlEscape(draft.payment || "Cash")}`
+    `Payer: <b>${htmlEscape(draft.payer || "TJ")}</b> · ${htmlEscape(split || "Shared by Units")} · ${htmlEscape(draft.payment || "Cash")}`
   ];
   const details = [
     `Draft id: ${draft.id}`,
@@ -403,6 +405,7 @@ async function getMemberByTelegram(tripId, user) {
 
 async function linkMember(tripId, user, chatId, memberName) {
   const member = normalizeMemberName(memberName);
+  if (!member) throw new Error("Link as TJ or EK only.");
   const data = {
     telegramUserId: String(user.id),
     telegramUsername: user.username || "",
@@ -447,7 +450,7 @@ function parseExpenseText(text, member) {
   const amount = pickNumber(raw, ["amount", "total"]) || num(raw.match(/(?:^|\s)(?:rp\s*)?([\d.,]{4,})(?:\s|$)/i)?.[1]);
   const paidMatch = raw.match(/\b(?:paid|payer|bayar|by)\s+([a-z0-9_]+)/i);
   const splitMatch = raw.match(/\bsplit\s+([a-z0-9/_-]+)/i);
-  const payer = normalizeMemberName(paidMatch?.[1] || member?.member || "TBD");
+  const payer = normalizeMemberName(paidMatch?.[1]) || member?.member || "TJ";
   const splitRaw = clean(splitMatch?.[1]).toLowerCase();
   let split = "Shared by Units";
   let billSplitMode = "Off";
@@ -506,44 +509,45 @@ function parseExpenseText(text, member) {
   return expense;
 }
 
-function shares(expense, members) {
+function shares(expense, units = splitUnits()) {
   const amount = expenseTotal(expense);
-  const labels = members.length ? members : ["TJ", "EK", "P3", "P4"];
-  if (!amount) return Object.fromEntries(labels.map((name) => [name, 0]));
+  if (!amount) return { TJ: 0, EK: 0 };
   if (expense.billSplitMode === "Custom TJ/EK") {
-    return Object.fromEntries(labels.map((name) => {
-      if (name === "TJ") return [name, num(expense.customTJAmount)];
-      if (name === "EK") return [name, num(expense.customEKAmount)];
-      return [name, 0];
-    }));
+    return {
+      TJ: num(expense.customTJAmount),
+      EK: num(expense.customEKAmount)
+    };
   }
   if (expense.billSplitMode === "Meal/order split") {
     const tjFood = num(expense.foodTJAmount);
     const ekFood = num(expense.foodEKAmount);
     const shared = num(expense.foodSharedAmount);
-    const baseTJ = tjFood + shared / 2;
-    const baseEK = ekFood + shared / 2;
+    const baseTJ = tjFood + shared * (units.TJ / units.total);
+    const baseEK = ekFood + shared * (units.EK / units.total);
     const base = baseTJ + baseEK;
     const tax = expense.billIncludesTaxService === "No" ? 0 : num(expense.taxServiceAmount);
-    const tjTax = base ? tax * (baseTJ / base) : tax / 2;
-    return Object.fromEntries(labels.map((name) => {
-      if (name === "TJ") return [name, baseTJ + tjTax];
-      if (name === "EK") return [name, baseEK + (tax - tjTax)];
-      return [name, 0];
-    }));
+    const tjTax = base ? tax * (baseTJ / base) : tax * (units.TJ / units.total);
+    return {
+      TJ: baseTJ + tjTax,
+      EK: baseEK + (tax - tjTax)
+    };
   }
-  if (expense.split === "TJ only") return { TJ: amount, EK: 0, P3: 0, P4: 0 };
-  if (expense.split === "EK only") return { TJ: 0, EK: amount, P3: 0, P4: 0 };
-  const each = amount / labels.length;
-  return Object.fromEntries(labels.map((name) => [name, each]));
+  if (expense.split === "TJ only") return { TJ: amount, EK: 0 };
+  if (expense.split === "EK only") return { TJ: 0, EK: amount };
+  if (expense.split === "Equal 50/50") return { TJ: amount / 2, EK: amount / 2 };
+  return {
+    TJ: amount * (units.TJ / units.total),
+    EK: amount * (units.EK / units.total)
+  };
 }
 
 async function settlement(tripId) {
-  const [expenseSnap, memberSnap] = await Promise.all([
+  const [tripSnap, expenseSnap] = await Promise.all([
+    tripRef(tripId).get(),
     tripRef(tripId).collection("expenses").where("status", "==", "confirmed").get(),
-    tripRef(tripId).collection("members").get()
   ]);
-  const members = memberLabels(memberSnap.docs.map((doc) => doc.data()));
+  const units = splitUnits(tripSnap.data()?.db?.settings || {});
+  const members = memberLabels();
   const paid = {};
   const owes = {};
   let total = 0;
@@ -555,8 +559,9 @@ async function settlement(tripId) {
     const exp = doc.data();
     const amount = expenseTotal(exp);
     total += amount;
-    paid[exp.payer] = (paid[exp.payer] || 0) + amount;
-    const expShares = shares(exp, members);
+    const payer = ACCOUNT_MEMBERS.includes(exp.payer) ? exp.payer : "TJ";
+    paid[payer] = (paid[payer] || 0) + amount;
+    const expShares = shares(exp, units);
     for (const [name, value] of Object.entries(expShares)) owes[name] = (owes[name] || 0) + value;
   });
   const net = {};
@@ -706,7 +711,8 @@ function parseSetPatch(args) {
     const value = clean(args[i + 1]);
     if (!value) continue;
     if (["paid", "payer", "by", "bayar"].includes(key)) {
-      patch.payer = normalizeMemberName(value);
+      const payer = normalizeMemberName(value);
+      if (payer) patch.payer = payer;
       i += 1;
     } else if (key === "split") {
       Object.assign(patch, splitUpdate(value));
@@ -927,7 +933,7 @@ function parseOcrExpense(ocrText, member) {
     category: "Food & Drinks",
     description: vendor,
     vendor,
-    payer: member?.member || "TBD",
+    payer: member?.member || "TJ",
     payment: "Cash",
     amount,
     split: "Shared by Units",
@@ -1041,6 +1047,7 @@ async function handleCommand(tripId, message) {
   if (command === "/link") {
     const [code, name] = args;
     if (!LINK_CODE || code !== LINK_CODE) return "Wrong or missing link code.";
+    if (!normalizeMemberName(name)) return "Use <code>/link CODE TJ</code> or <code>/link CODE EK</code>. Multiple Telegram accounts can link to the same TJ/EK account.";
     const linked = await linkMember(tripId, user, chatId, name);
     return `Linked ${linked.displayName} as <b>${linked.member}</b>.`;
   }
@@ -1216,7 +1223,6 @@ async function handleCallback(tripId, callbackQuery) {
     await sendTelegram(chatId, [
       "<b>Add expense examples</b>",
       "<code>/expense meal 220000 paid TJ split 50/50</code>",
-      "<code>/meal 220000 paid EK split order</code>",
       "<code>/expense fuel 500000 paid EK split equal</code>",
       "",
       "<b>Detailed meal split</b>",

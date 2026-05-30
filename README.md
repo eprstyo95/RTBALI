@@ -26,7 +26,7 @@ seed database and still works offline.
   (≈ Rp 5.35 M with buffer, 2,432 km, ~270 L diesel) instead of the empty budget
   table, so the dashboard is useful *before* you spend anything.
 - **Smart settlement engine**: honors each expense's split type (Shared by Units
-  2.5/2.5, Equal 50/50, TJ-only, EK-only) and TBD payers, instead of a naive 50/50.
+  2.5/2.5, Equal 50/50, TJ-only, EK-only) for the TJ/EK accounts instead of a naive 50/50.
 - **Route map**: a GeoJSON-backed Java→Bali map with status-coloured overnight stops and
   ferry crossings, plus a per-leg distance breakdown.
 - **Fuel Log**: fill-up KPIs, sortable odometer/liter/cost table, automatic
@@ -117,11 +117,8 @@ In your Telegram group:
 /menu
 /link YOUR_CODE TJ
 /link YOUR_CODE EK
-/link YOUR_CODE P3
-/link YOUR_CODE P4
 /unlink
 /expense meal 220000 paid TJ split 50/50
-/meal 220000 paid EK split order
 /meal paid TJ split order tjfood 120000 ekfood 80000 shared 50000 tax 30000 place Warung Apple
 /expense food paid EK split custom customtj 150000 customek 90000 vendor La Luna
 /saldo
@@ -130,6 +127,9 @@ In your Telegram group:
 
 `/menu` opens Telegram buttons for saldo, linked members, examples, OCR help,
 and unlinking yourself from the trip.
+
+Multiple Telegram accounts can link to the same TJ or EK account, so both phones
+can upload receipt proof without creating extra settlement members.
 
 Detailed expense keys match the web ledger: `date`, `place`, `vendor`,
 `payment`, `desc`, `note`, `tjfood`, `ekfood`, `shared`, `tax`, `customtj`,

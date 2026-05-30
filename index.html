@@ -647,7 +647,8 @@ function normalize(d) {
   d.lists = d.lists || {};
   d.lists.statuses = arr(d.lists.statuses, ["Not started","In progress","Need booking","Need decision","Booked","Confirmed","Done"]);
   d.lists.categories = arr(d.lists.categories, ["Fuel/Diesel","Toll/e-Money","Ferry","Hotel","Food & Drinks","Activity/Tickets","Parking","Necessities","Other"]);
-  d.lists.payers = arr(d.lists.payers, ["TJ","EK","TBD"]);
+  d.lists.payers = arr(d.lists.payers, ["TJ","EK"]).filter(p=>["TJ","EK"].includes(p));
+  if(!d.lists.payers.length) d.lists.payers = ["TJ","EK"];
   d.lists.payments = arr(d.lists.payments, ["Cash","Debit/Credit","QRIS","Transfer","e-Money","Online"]);
   d.lists.splits = arr(d.lists.splits, ["Shared by Units","Equal 50/50","TJ only","EK only","Custom"]);
   d.lists.billSplitModes = arr(d.lists.billSplitModes, ["Off","Meal/order split","Custom TJ/EK"]);
@@ -660,16 +661,17 @@ function normalize(d) {
   d.accommodations.forEach((r)=>{ r.checkInDate = fixDate(r.checkInDate); r.checkOutDate = fixDate(r.checkOutDate); });
   d.expenses.forEach((r,i)=>{
     r.id = r.id || `exp-${i}`; r.amount = num(r.amount); r.date = fixDate(r.date);
+    r.payer = ["TJ","EK"].includes(r.payer) ? r.payer : "TJ";
     ["foodTJAmount","foodEKAmount","foodSharedAmount","taxServiceAmount","customTJAmount","customEKAmount"].forEach(k=>{ r[k]=num(r[k]); });
     r.billSplitMode = r.billSplitMode || "Off";
     r.billIncludesTaxService = r.billIncludesTaxService || "Yes";
   });
-  d.categoryDetails.forEach((r,i)=>{ r.id = r.id || `det-${i}`; ["km","liters","unitPrice","baseAmount"].forEach(k=>{ if(r[k]!==undefined && r[k]!=="") r[k]=num(r[k]); }); r.date = fixDate(r.date); });
+  d.categoryDetails.forEach((r,i)=>{ r.id = r.id || `det-${i}`; r.payer = ["TJ","EK"].includes(r.payer) ? r.payer : "TJ"; ["km","liters","unitPrice","baseAmount"].forEach(k=>{ if(r[k]!==undefined && r[k]!=="") r[k]=num(r[k]); }); r.date = fixDate(r.date); });
   d.fuelLog.forEach((r,i)=>{
     r.id = r.id || `fuel-${i}`; r.date = fixDate(r.date);
     ["odometer","liters","pricePerLiter","total"].forEach(k=>{ r[k]=num(r[k]); });
     if(!r.total && r.liters && r.pricePerLiter) r.total = r.liters * r.pricePerLiter;
-    r.payer = r.payer || "TBD";
+    r.payer = ["TJ","EK"].includes(r.payer) ? r.payer : "TJ";
     r.payment = r.payment || "Cash";
   });
   return d;
@@ -706,6 +708,9 @@ function applyTheme(t){
   document.documentElement.setAttribute("data-theme", t);
   store.set(THEME_KEY, t);
   $("themeBtn").innerHTML = icon(t === "dark" ? "sun" : "moon");
+  Object.entries(routeMaps).forEach(([id, map])=>{
+    if($(id) && map) queueRouteMap(id, id === "routeMiniMap");
+  });
 }
 
 /* ---------- tabs / events ---------- */
@@ -815,7 +820,7 @@ function renderHero(){
       </div>
     </div>
     <div class="hero-card hero-right">
-      <div class="map-head"><h3 class="serif">Route at a glance</h3><span>dark live map</span></div>
+      <div class="map-head"><h3 class="serif">Route at a glance</h3><span>live map</span></div>
       <div class="mini-map"><div id="routeMiniMap" class="real-map" aria-label="Route at a glance map">${routeSvg(true)}</div></div>
     </div>`;
   queueRouteMap("routeMiniMap", true);
@@ -1379,7 +1384,7 @@ function renderMap(){
   $("pane-map").innerHTML = `
     <div class="panel" style="padding:0;overflow:hidden">
       <div style="padding:18px 18px 0"><div class="sec-head"><h2 class="serif">${icon("pin")} Trans-Java → Bali route</h2>
-        <span class="meta">dark live map · ~${fmtN.format(fuel.km)} km round trip</span></div></div>
+        <span class="meta">theme-aware live map · ~${fmtN.format(fuel.km)} km round trip</span></div></div>
       <div class="routemap" style="border:0;border-radius:0"><div id="routeMainMap" class="real-map big" aria-label="Trans-Java to Bali route map">${routeSvg(false)}</div></div>
       <div class="legend">
         <span class="l"><span class="sw" style="background:var(--teal)"></span>Confirmed</span>
@@ -1422,7 +1427,8 @@ function initRouteMap(id, mini){
     tap: true
   });
   routeMaps[id] = map;
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png", {
+  const mapTheme = document.documentElement.getAttribute("data-theme") === "dark" ? "dark_all" : "light_all";
+  L.tileLayer(`https://{s}.basemaps.cartocdn.com/${mapTheme}/{z}/{x}/{y}.png`, {
     maxZoom: 19,
     detectRetina: false,
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
@@ -1620,7 +1626,7 @@ function defaultRecord(type){
     return {
       date: new Date().toISOString().slice(0,10),
       category: db.lists.categories?.find(c=>c==="Food & Drinks") || db.lists.categories?.[0] || "Other",
-      payer: "TBD",
+      payer: db.lists.payers?.[0] || "TJ",
       payment: "Cash",
       amount: 0,
       split: "Shared by Units",
@@ -1643,7 +1649,7 @@ function defaultRecord(type){
       liters: 0,
       pricePerLiter: fuel.dieselPrice || 6800,
       total: 0,
-      payer: fuel.defaultPayer || "TBD",
+      payer: fuel.defaultPayer || db.lists.payers?.[0] || "TJ",
       payment: "Cash"
     };
   }
