@@ -297,6 +297,7 @@ tfoot td{background:var(--card2);font-weight:700;border-top:2px solid var(--line
 /* cost plan settings */
 .set-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:13px}
 .set-card{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px}
+.set-card-disabled{opacity:.6;border-style:dashed}
 .set-card .ch{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:11px}
 .set-card .ch .nm{font-family:Georgia,"Times New Roman",serif;font-weight:700;font-size:15px;display:flex;align-items:center;gap:8px}
 .set-card .ch .tot{font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-weight:500;color:var(--gold);font-size:14px}
@@ -320,6 +321,10 @@ tfoot td{background:var(--card2);font-weight:700;border-top:2px solid var(--line
 .routemap{background:var(--card);border:1px solid var(--line);border-radius:var(--r);overflow:hidden}
 .routemap>svg{display:block;width:100%;height:auto}
 .mnode{cursor:help}
+.mnode[data-act]{cursor:pointer}
+.mnode[data-act] circle,.mnode[data-act] rect{transition:transform .15s}
+.mnode[data-act]:hover circle{transform-box:fill-box;transform-origin:center;transform:scale(1.45)}
+.mnode[data-act]:hover rect{transform-box:fill-box;transform-origin:center;transform:scale(1.4)}
 .mnode:hover circle,.mnode:hover rect{stroke:var(--ink);stroke-width:3.5}
 .legend{display:flex;gap:16px;flex-wrap:wrap;padding:14px 18px;border-top:1px solid var(--line);background:var(--card2)}
 .legend .l{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:600;color:var(--ink2)}
@@ -443,8 +448,7 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
   <section class="pane" id="pane-expenses"></section>
   <section class="pane" id="pane-plan"></section>
   <section class="pane" id="pane-fuel"></section>
-  <section class="pane" id="pane-data"></section>
-
+  
   <p class="footer-note">RTBALI · data stays in your browser (localStorage). Export to back up or commit. Built for offline use.</p>
 </main>
 
@@ -584,8 +588,7 @@ const TABS = [
   ["checklist","Checklist","check"],
   ["expenses","Expenses","wallet"],
   ["plan","Cost Plan","calc"],
-  ["fuel","Fuel Log","fuel"],
-  ["data","Data","db"]
+  ["fuel","Fuel Log","fuel"]
 ];
 
 const ROUTE_GEOJSON = {
@@ -751,6 +754,7 @@ function delegate(e){
   else if (act==="cycle") cycleTask(a.dataset.id);
   else if (act==="goto") setTab(a.dataset.tab);
   else if (act==="sort") sortTable(a.dataset.table, a.dataset.key, a.dataset.numeric==="1");
+  else if (act==="add-trip-stop"){ const r=defaultRecord("trip"); r.overnight=a.dataset.label||""; openEditor("trip"); }
   else if (act==="quickDeleteExpense") quickDeleteExpense(a.dataset.id);
   else if (act==="cloudPush") cloudPushQuick();
   else if (act==="cloudMergeExpenses") cloudMergeExpensesQuick();
@@ -762,7 +766,7 @@ function delegate(e){
 function renderAll(){
   ensureFilters();
   const steps = [renderHero,renderKpis,renderBadges,renderDashboard,renderItinerary,renderMap,
-    renderStays,renderChecklist,renderExpenses,renderPlan,renderFuelLog,renderData];
+    renderStays,renderChecklist,renderExpenses,renderPlan,renderFuelLog];
   steps.forEach(fn=>{ try { fn(); } catch(err){ console.error(fn.name, err); } });
 }
 /* lighter path on filter changes */
@@ -778,7 +782,7 @@ function ensureFilters(){
 function renderBadges(){
   const counts = { dashboard:"", itinerary:db.tripPlans.length, map:MAP_STOPS.length, stays:db.accommodations.length,
     checklist:db.checklist.filter(t=>!isDone(t)).length, expenses:db.expenses.length, plan:db.categoryDetails.length,
-    fuel:db.fuelLog.length, data:db.sources.length };
+    fuel:db.fuelLog.length };
   document.querySelectorAll("[data-badge]").forEach(b=>{ const v=counts[b.dataset.badge]; b.textContent = v||v===0?String(v):""; b.style.display = v||v===0?"":"none"; });
 }
 
@@ -1085,6 +1089,7 @@ function calcDetail(row){
 function planTotals(){
   const out = { base:0, withBuffer:0, byCategory:{} };
   db.categoryDetails.forEach(r=>{
+    if(detailSetting(r.category).enabled === false) return;
     const c = calcDetail(r);
     out.base += c.base; out.withBuffer += c.total;
     out.byCategory[r.category] ||= { base:0, withBuffer:0 };
@@ -1139,19 +1144,32 @@ function renderPlan(){
 }
 function settingCard(cat, tot={base:0,withBuffer:0}){
   const s = detailSetting(cat);
+  const enabled = s.enabled !== false;
   const fuelInputs = cat==="Fuel/Diesel"
-    ? `<label>km / liter<input data-setting="${escapeAttr(cat)}" data-key="kmPerLiter" type="number" step="0.1" value="${num(s.kmPerLiter)||9}"></label>
-       <label>Diesel price<input data-setting="${escapeAttr(cat)}" data-key="dieselPrice" type="number" value="${num(s.dieselPrice)||6800}"></label>` : "";
-  return `<div class="set-card">
-    <div class="ch"><div class="nm"><span class="sw" style="width:10px;height:10px;border-radius:3px;background:${COLORMAP[cat]||"var(--faint)"}"></span>${escapeHtml(cat)}</div><div class="tot">${fmt.format(tot.withBuffer||0)}</div></div>
-    <div class="inputs">
+    ? `<label>km / liter<input data-setting="${escapeAttr(cat)}" data-key="kmPerLiter" type="number" step="0.1" min="1" value="${num(s.kmPerLiter)||9}"></label>
+       <label>Diesel price (IDR/L)<input data-setting="${escapeAttr(cat)}" data-key="dieselPrice" type="number" step="100" value="${num(s.dieselPrice)||6800}"></label>` : "";
+  return `<div class="set-card${enabled?"":" set-card-disabled"}">
+    <div class="ch">
+      <div class="nm"><span class="sw" style="width:10px;height:10px;border-radius:3px;background:${COLORMAP[cat]||"var(--faint)"}"></span>${escapeHtml(cat)}</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <label style="display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:600;color:var(--muted);cursor:pointer">
+          <input type="checkbox" data-setting="${escapeAttr(cat)}" data-key="enabled" ${enabled?"checked":""} style="width:auto;accent-color:var(--teal)"> Active
+        </label>
+        <div class="tot">${fmt.format(enabled?tot.withBuffer||0:0)}</div>
+      </div>
+    </div>
+    <div class="inputs" style="${enabled?"":"opacity:.45;pointer-events:none"}">
       ${fuelInputs}
       <label>Buffer<select data-setting="${escapeAttr(cat)}" data-key="buffer"><option ${s.buffer==="Yes"?"selected":""}>Yes</option><option ${s.buffer==="No"?"selected":""}>No</option></select></label>
-      <label>Buffer rate<input data-setting="${escapeAttr(cat)}" data-key="bufferRate" type="number" step="0.05" value="${num(s.bufferRate)??0.1}"></label>
+      <label>Buffer rate<input data-setting="${escapeAttr(cat)}" data-key="bufferRate" type="number" step="0.01" min="0" max="1" value="${num(s.bufferRate)??0.1}"></label>
       <label>Default payer<select data-setting="${escapeAttr(cat)}" data-key="defaultPayer">${db.lists.payers.map(p=>`<option ${p===s.defaultPayer?"selected":""}>${p}</option>`).join("")}</select></label>
       <label>Split<select data-setting="${escapeAttr(cat)}" data-key="split">${db.lists.splits.map(p=>`<option ${p===s.split?"selected":""}>${p}</option>`).join("")}</select></label>
     </div>
-    <div class="mini"><span>Base <b>${fmt.format(tot.base||0)}</b></span><span>Buffer <b>${fmt.format((tot.withBuffer||0)-(tot.base||0))}</b></span></div>
+    <div class="mini">
+      <span>Base <b>${fmt.format(enabled?tot.base||0:0)}</b></span>
+      <span>Buffer <b>${fmt.format(enabled?(tot.withBuffer||0)-(tot.base||0):0)}</b></span>
+      <span>Total <b>${fmt.format(enabled?tot.withBuffer||0:0)}</b></span>
+    </div>
   </div>`;
 }
 function detailSection(cat, tot={base:0,withBuffer:0}){
@@ -1193,9 +1211,12 @@ function detailSub(r){
 }
 function onSettingChange(e){
   const cat=e.target.dataset.setting, key=e.target.dataset.key;
+  if(!cat||!key) return;
   db.categorySettings[cat] ||= {};
-  db.categorySettings[cat][key] = e.target.type==="number" ? num(e.target.value) : e.target.value;
-  if (cat==="Fuel/Diesel" && (key==="kmPerLiter"||key==="dieselPrice")) recalcFuel();
+  if(e.target.type==="checkbox") db.categorySettings[cat][key] = e.target.checked;
+  else if(e.target.type==="number") db.categorySettings[cat][key] = num(e.target.value);
+  else db.categorySettings[cat][key] = e.target.value;
+  if(cat==="Fuel/Diesel" && (key==="kmPerLiter"||key==="dieselPrice")) recalcFuel();
   persist(); renderAll();
 }
 
@@ -1384,7 +1405,8 @@ function renderMap(){
   $("pane-map").innerHTML = `
     <div class="panel" style="padding:0;overflow:hidden">
       <div style="padding:18px 18px 0"><div class="sec-head"><h2 class="serif">${icon("pin")} Trans-Java → Bali route</h2>
-        <span class="meta">theme-aware live map · ~${fmtN.format(fuel.km)} km round trip</span></div></div>
+        <div class="right"><span class="meta">~${fmtN.format(fuel.km)} km · click a stop to edit</span>
+          <button class="btn primary" data-act="add" data-type="trip">${icon("plus")} Add day</button></div></div></div>
       <div class="routemap" style="border:0;border-radius:0"><div id="routeMainMap" class="real-map big" aria-label="Trans-Java to Bali route map">${routeSvg(false)}</div></div>
       <div class="legend">
         <span class="l"><span class="sw" style="background:var(--teal)"></span>Confirmed</span>
@@ -1476,8 +1498,10 @@ function routeSvg(mini){
     const c = colorFor(s);
     const r = (s.type==="start"||s.type==="end")?9:(s.type==="ferry"?6:7);
     const lblY = s.y < 180 ? s.y-16 : s.y+22;
-    return `<g class="mnode">
-      <title>${escapeHtml(`${s.label} · ${s.city || s.label} · ${s.sub}`)}</title>
+    const trip = db.tripPlans.find(t=>(t.overnight||"").toLowerCase().includes(s.label.toLowerCase())||(s.label==="Uluwatu"&&/uluwatu|nusa dua|jimbaran/i.test(t.overnight||"")));
+    const editAttrs = !mini && trip ? `data-act="edit" data-type="trip" data-id="${trip.id}" style="cursor:pointer"` : (!mini && s.type!=="ferry"?`data-act="add-trip-stop" data-label="${escapeAttr(s.label)}" style="cursor:pointer"`:"");
+    return `<g class="mnode" ${editAttrs}>
+      <title>${escapeHtml(s.label)} — ${escapeHtml(s.sub)}${trip?" · click to edit":(!mini&&s.type!=="ferry"?" · click to add day":"")}</title>
       ${s.type==="ferry"?`<rect x="${sx(s.x)-6}" y="${sy(s.y)-6}" width="12" height="12" rx="3" fill="${c}" stroke="var(--card)" stroke-width="2" transform="rotate(45 ${sx(s.x)} ${sy(s.y)})"/>`
         :`<circle cx="${sx(s.x)}" cy="${sy(s.y)}" r="${r}" fill="${c}" stroke="var(--card)" stroke-width="2.5"/>`}
       ${mini?"":`<text x="${sx(s.x)}" y="${sy(lblY)}" text-anchor="middle" font-family="Inter,system-ui,-apple-system,Segoe UI,sans-serif" font-size="12" font-weight="600" fill="var(--ink)">${escapeHtml(s.label)}</text>
@@ -1511,13 +1535,28 @@ function fuelPlanSummary(){
   return { liters, cost, km };
 }
 function fuelLogRows(){
-  const rows = (db.fuelLog||[]).map(r=>({ ...r, total: num(r.total) || num(r.liters) * num(r.pricePerLiter) }));
-  rows.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")) || (num(a.odometer)-num(b.odometer)));
+  // dedicated fill-up entries
+  const dedicated = (db.fuelLog||[]).map(r=>({
+    ...r, _src:"fuelLog",
+    total: num(r.total)||num(r.liters)*num(r.pricePerLiter)
+  }));
+  const linkedExpIds = new Set(dedicated.map(r=>r.expenseId).filter(Boolean));
+  // Fuel/Diesel expenses not already linked to a fuelLog entry
+  const fromExpenses = db.expenses
+    .filter(e=>e.category==="Fuel/Diesel" && !linkedExpIds.has(e.id))
+    .map(e=>({
+      id: e.id, _src:"expense",
+      date: e.date, station: e.place||e.vendor||e.description||"",
+      liters: num(e.liters)||0, pricePerLiter: num(e.pricePerLiter)||0,
+      total: expenseTotal(e), payer: e.payer, notes: e.notes||"", odometer: 0
+    }));
+  const rows = [...dedicated, ...fromExpenses];
+  rows.sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))||(num(a.odometer)-num(b.odometer)));
   let prevOdo = null;
   return rows.map(r=>{
     const odo = num(r.odometer);
     const kmDelta = prevOdo && odo > prevOdo ? odo - prevOdo : 0;
-    const efficiency = kmDelta && num(r.liters) ? kmDelta / num(r.liters) : 0;
+    const efficiency = kmDelta && num(r.liters) ? kmDelta/num(r.liters) : 0;
     if(odo) prevOdo = odo;
     return { ...r, kmDelta, efficiency };
   });
@@ -1540,15 +1579,19 @@ function fuelLogSummary(){
 function renderFuelLog(){
   const s = fuelLogSummary();
   const rows = sortRows(s.rows, "fuel");
-  const body = rows.length ? rows.map(r=>`<tr>
+  const body = rows.length ? rows.map(r=>`<tr${r._src==="expense"?" style=\"background:color-mix(in srgb,var(--gold-soft) 40%,transparent)\"":""}>
     <td>${dateText(r.date)}</td>
-    <td><div class="lead2">${escapeHtml(r.station||"—")}</div>${r.notes?`<div class="sub">${escapeHtml(r.notes)}</div>`:""}</td>
+    <td>
+      <div class="lead2">${escapeHtml(r.station||"—")}</div>
+      ${r.notes?`<div class="sub">${escapeHtml(r.notes)}</div>`:""}
+      ${r._src==="expense"?`<div class="sub" style="color:var(--gold)">from expenses</div>`:""}
+    </td>
     <td class="num">${num(r.odometer)?fmtN.format(num(r.odometer)):"—"}</td>
     <td class="num">${num(r.liters)?fmtN.format(num(r.liters)):"—"}</td>
     <td class="num">${num(r.pricePerLiter)?fmt.format(num(r.pricePerLiter)):"—"}</td>
     <td class="num">${fmt.format(num(r.total))}</td>
     <td>${payerPill(r.payer)}</td>
-    <td><button class="linkbtn" data-act="edit" data-type="fuelLog" data-id="${r.id}">Edit</button></td>
+    <td><button class="linkbtn" data-act="edit" data-type="${r._src==="expense"?"expense":"fuelLog"}" data-id="${r.id}">Edit</button></td>
   </tr>`).join("") : `<tr><td colspan="8">${empty("No fuel fill-ups logged yet.","fuel")}</td></tr>`;
   $("pane-fuel").innerHTML = `
     <div class="kpis">
