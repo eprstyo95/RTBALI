@@ -245,16 +245,16 @@ function menuKeyboard() {
   return {
     inline_keyboard: [
       [
-        { text: "Saldo", callback_data: "menu:saldo" },
-        { text: "Who", callback_data: "menu:who" }
+        { text: "💰 Saldo",       callback_data: "menu:saldo" },
+        { text: "👥 Who",         callback_data: "menu:who"   }
       ],
       [
-        { text: "How to add expense", callback_data: "menu:expense" },
-        { text: "Receipt OCR", callback_data: "menu:ocr" }
+        { text: "➕ Add expense", callback_data: "menu:expense" },
+        { text: "📷 Receipt OCR", callback_data: "menu:ocr"    }
       ],
       [
-        { text: "Help", callback_data: "menu:help" },
-        { text: "Unlink me", callback_data: "menu:unlink" }
+        { text: "❓ Help",        callback_data: "menu:help"   },
+        { text: "🔓 Unlink me",   callback_data: "menu:unlink" }
       ]
     ]
   };
@@ -264,118 +264,36 @@ function ocrDraftKeyboard(expenseId) {
   return {
     inline_keyboard: [
       [
-        { text: "Paid by TJ", callback_data: `exp:p:${expenseId}:TJ` },
-        { text: "Paid by EK", callback_data: `exp:p:${expenseId}:EK` }
+        { text: "💳 TJ paid",       callback_data: `exp:p:${expenseId}:TJ`    },
+        { text: "💳 EK paid",       callback_data: `exp:p:${expenseId}:EK`    }
       ],
       [
-        { text: "Shared units", callback_data: `exp:s:${expenseId}:units` },
-        { text: "50/50", callback_data: `exp:s:${expenseId}:5050` }
+        { text: "⚖️ Shared units",  callback_data: `exp:s:${expenseId}:units` },
+        { text: "½ 50/50",          callback_data: `exp:s:${expenseId}:5050`  }
       ],
       [
-        { text: "TJ only", callback_data: `exp:s:${expenseId}:tj` },
-        { text: "EK only", callback_data: `exp:s:${expenseId}:ek` }
+        { text: "👤 TJ only",       callback_data: `exp:s:${expenseId}:tj`    },
+        { text: "👤 EK only",       callback_data: `exp:s:${expenseId}:ek`    }
       ],
       [
-        { text: "Cash", callback_data: `exp:m:${expenseId}:cash` },
-        { text: "QRIS", callback_data: `exp:m:${expenseId}:qris` },
-        { text: "Card", callback_data: `exp:m:${expenseId}:card` }
+        { text: "💵 Cash",          callback_data: `exp:m:${expenseId}:cash`  },
+        { text: "📱 QRIS",          callback_data: `exp:m:${expenseId}:qris`  },
+        { text: "💳 Card",          callback_data: `exp:m:${expenseId}:card`  }
       ],
       [
-        { text: "Confirm", callback_data: `exp:c:${expenseId}` }
+        { text: "✅ Confirm",       callback_data: `exp:c:${expenseId}`       }
       ]
     ]
   };
 }
 
-function ocrCommandKeyboard() {
-  return {
-    keyboard: [
-      [
-        { text: "/cat Food" },
-        { text: "/cat Fuel" }
-      ],
-      [
-        { text: "/cat Toll" },
-        { text: "/cat Ferry" }
-      ],
-      [
-        { text: "/cat Hotel" },
-        { text: "/cat Parking" }
-      ],
-      [
-        { text: "/cat Other" },
-        { text: "/confirm" }
-      ],
-      [
-        { text: "/hidekeys" }
-      ]
-    ],
-    resize_keyboard: true,
-    one_time_keyboard: false,
-    input_field_placeholder: "Pick category first"
-  };
-}
+// Dismiss any lingering reply keyboard — replaces the old cluttered command keyboards
+const REMOVE_KEYBOARD = { remove_keyboard: true };
+function ocrCommandKeyboard() { return REMOVE_KEYBOARD; }
+function ocrGeneralKeyboard() { return REMOVE_KEYBOARD; }
+function ocrMealKeyboard()    { return REMOVE_KEYBOARD; }
+// Kept as stubs so existing call sites compile without changes.
 
-function ocrGeneralKeyboard() {
-  return {
-    keyboard: [
-      [
-        { text: "/set paid TJ" },
-        { text: "/set paid EK" }
-      ],
-      [
-        { text: "/set split units" },
-        { text: "/set split 50/50" }
-      ],
-      [
-        { text: "/set payment Cash" },
-        { text: "/set payment QRIS" }
-      ],
-      [
-        { text: "/cat Food" },
-        { text: "/confirm" },
-        { text: "/hidekeys" }
-      ]
-    ],
-    resize_keyboard: true,
-    one_time_keyboard: false,
-    input_field_placeholder: "Tap a draft action"
-  };
-}
-
-function ocrMealKeyboard() {
-  return {
-    keyboard: [
-      [
-        { text: "/meal" },
-        { text: "/set split 50/50" }
-      ],
-      [
-        { text: "/tjfood" },
-        { text: "/ekfood" }
-      ],
-      [
-        { text: "/shared" },
-        { text: "/tax" }
-      ],
-      [
-        { text: "/notax" },
-        { text: "/set payment QRIS" }
-      ],
-      [
-        { text: "/set paid TJ" },
-        { text: "/set paid EK" }
-      ],
-      [
-        { text: "/confirm" },
-        { text: "/hidekeys" }
-      ]
-    ],
-    resize_keyboard: true,
-    one_time_keyboard: false,
-    input_field_placeholder: "Meal split actions"
-  };
-}
 
 function ocrDraftText(draft, ocr = null) {
   const split = draft.billSplitMode !== "Off" ? draft.billSplitMode : draft.split;
