@@ -171,7 +171,10 @@ async function sendTelegram(chatId, text, extra = {}) {
 }
 
 async function editTelegramMessage(chatId, messageId, text, extra = {}) {
-  if (!TELEGRAM_TOKEN || !chatId || !messageId) return null;
+  if (!TELEGRAM_TOKEN || !chatId || !messageId) {
+    logger.warn("editTelegramMessage: missing params", { chatId, messageId });
+    return { ok: false, error: "missing params" };
+  }
   const response = await fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/editMessageText`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -184,11 +187,11 @@ async function editTelegramMessage(chatId, messageId, text, extra = {}) {
       ...extra
     })
   });
-  if (!response.ok) {
-    const body = await response.text();
-    logger.error("Telegram editMessageText failed", body);
+  const json = await response.json().catch(() => ({}));
+  if (!json.ok) {
+    logger.error("editMessageText failed", { description: json.description, chatId, messageId });
   }
-  return response;
+  return json;
 }
 
 async function sendTelegramCapture(chatId, text, extra = {}) {
@@ -690,10 +693,8 @@ async function setPendingAmount(tripId, user, field, expenseId) {
 }
 
 // ============================================================
-// EXPENSE WIZARD — guided multi-step entry, one message edited in-place
-// ============================================================
-// EXPENSE PANEL — single inline message, edited in place on every tap
-// No wizard state. messageId comes from the callback itself.
+// EXPENSE SESSION — one draft message, edited in place on every command
+// Reply keyboard (user liked this). No new messages until confirm.
 // ============================================================
 
 const CATEGORY_KEY_MAP = {
@@ -702,93 +703,92 @@ const CATEGORY_KEY_MAP = {
   activity:"Activity/Tickets", needs:"Necessities", other:"Other"
 };
 
-function shortAmt(v) {
-  const n = num(v);
-  if (!n) return "—";
-  if (n >= 1000000) return `${(n/1000000).toFixed(1)}M`;
-  if (n >= 1000)    return `${Math.round(n/1000)}k`;
-  return String(n);
+// ── session keyboard (clean reply keyboard, two modes) ──────────────────────
+function sessionKeyboard(draft) {
+  const isMeal = draft.billSplitMode === "Meal/order split";
+  if (isMeal) {
+    return {
+      keyboard: [
+        [{ text: "/tjfood" },        { text: "/ekfood" }],
+        [{ text: "/shared" },        { text: "/tax" }],
+        [{ text: "/set paid TJ" },   { text: "/set paid EK" }],
+        [{ text: "/confirm" },       { text: "/cancel" }]
+      ],
+      resize_keyboard: true, one_time_keyboard: false,
+      input_field_placeholder: "Tap above or type amount"
+    };
+  }
+  return {
+    keyboard: [
+      [{ text: "/cat Food" },  { text: "/cat Fuel" },  { text: "/cat Toll" }],
+      [{ text: "/cat Ferry" }, { text: "/cat Hotel" }, { text: "/cat Other" }],
+      [{ text: "/set paid TJ" },          { text: "/set paid EK" }],
+      [{ text: "/set split units" },      { text: "/set split 50/50" }],
+      [{ text: "/set payment QRIS" },     { text: "/set payment Cash" }],
+      [{ text: "/confirm" },              { text: "/cancel" }]
+    ],
+    resize_keyboard: true, one_time_keyboard: false,
+    input_field_placeholder: "Choose category, payer, split…"
+  };
 }
 
-function panelText(draft) {
+// ── session draft text ──────────────────────────────────────────────────────
+function sessionText(draft, prompt = "") {
   const isMeal = draft.billSplitMode === "Meal/order split";
-  const lines  = ["🧾 <b>New expense</b>"];
-  if (draft.category) lines.push(`📂 ${htmlEscape(draft.category)}`);
-  if (num(draft.amount)) lines.push(`💰 ${rupiah(draft.amount)}`);
-  if (draft.vendor)   lines.push(`🏪 ${htmlEscape(draft.vendor)}`);
-  if (draft.payer)    lines.push(`💳 Paid by <b>${draft.payer}</b>`);
+  const lines  = ["<b>📝 Draft expense</b>"];
+  if (draft.category) lines.push(`Category: <b>${htmlEscape(draft.category)}</b>`);
+  if (num(draft.amount)) lines.push(`Amount: <b>${rupiah(draft.amount)}</b>`);
+  if (draft.vendor)   lines.push(`At: ${htmlEscape(draft.vendor)}`);
+  if (draft.payer)    lines.push(`Payer: <b>${draft.payer}</b>`);
   if (isMeal) {
     const parts = [];
     if (num(draft.foodTJAmount))     parts.push(`TJ ${rupiah(draft.foodTJAmount)}`);
     if (num(draft.foodEKAmount))     parts.push(`EK ${rupiah(draft.foodEKAmount)}`);
     if (num(draft.foodSharedAmount)) parts.push(`shared ${rupiah(draft.foodSharedAmount)}`);
     if (num(draft.taxServiceAmount)) parts.push(`tax ${rupiah(draft.taxServiceAmount)}`);
-    if (parts.length) lines.push(`🍽 ${parts.join("  ·  ")}`);
+    if (parts.length) lines.push(`Split: ${parts.join("  ·  ")}`);
     const s = shares(draft);
     if (s.TJ || s.EK) lines.push(`→ TJ <b>${rupiah(Math.round(s.TJ))}</b>   EK <b>${rupiah(Math.round(s.EK))}</b>`);
   } else {
-    if (draft.split && draft.split !== "Shared by Units") lines.push(`⚖️ ${draft.split}`);
-    if (draft.payment && draft.payment !== "Cash")        lines.push(`💳 ${draft.payment}`);
+    if (draft.split && draft.split !== "Shared by Units") lines.push(`Split: ${draft.split}`);
+    if (draft.payment && draft.payment !== "Cash")        lines.push(`Via: ${draft.payment}`);
   }
+  if (prompt) lines.push(`\n${prompt}`);
   return lines.join("\n");
 }
 
-function panelKeyboard(draft) {
-  const b   = (text, data) => ({ text, callback_data: data });
-  const p   = (a, v) => `panel:${a}:${draft.id}:${v}`;
-  const sel = (label, match) => match ? `✓ ${label}` : label;
-  const cat = draft.category;
-  const isMeal = draft.billSplitMode === "Meal/order split";
-
-  const rows = [
-    // category row 1
-    [b(sel("🍽 Food", cat==="Food & Drinks"),  p("cat","food")),
-     b(sel("⛽ Fuel",  cat==="Fuel/Diesel"),   p("cat","fuel")),
-     b(sel("🛣 Toll",  cat==="Toll/e-Money"),  p("cat","toll")),
-     b(sel("⛴ Ferry", cat==="Ferry"),          p("cat","ferry"))],
-    // category row 2
-    [b(sel("🏨 Hotel",    cat==="Hotel"),             p("cat","hotel")),
-     b(sel("🅿 Parking",  cat==="Parking"),           p("cat","parking")),
-     b(sel("🎡 Activity", cat==="Activity/Tickets"),  p("cat","activity")),
-     b(sel("🛒 Other",    cat==="Other"),             p("cat","other"))],
-    // payer
-    [b(sel("💳 TJ paid", draft.payer==="TJ"), p("pay","TJ")),
-     b(sel("💳 EK paid", draft.payer==="EK"), p("pay","EK"))],
-  ];
-
-  if (isMeal) {
-    rows.push([
-      b(`🍽 TJ: ${shortAmt(draft.foodTJAmount)}`,     p("meal","tj")),
-      b(`🍽 EK: ${shortAmt(draft.foodEKAmount)}`,     p("meal","ek")),
-      b(`🤝 Shared: ${shortAmt(draft.foodSharedAmount)}`, p("meal","shared")),
-      b(`🧾 Tax: ${shortAmt(draft.taxServiceAmount)}`, p("meal","tax"))
-    ]);
-  } else {
-    const sp = draft.split;
-    rows.push([
-      b(sel("⚖️ Units", sp==="Shared by Units"), p("split","units")),
-      b(sel("½ 50/50",  sp==="Equal 50/50"),     p("split","5050")),
-      b(sel("👤 TJ",    sp==="TJ only"),          p("split","tj")),
-      b(sel("👤 EK",    sp==="EK only"),          p("split","ek"))
-    ]);
-    const pm = draft.payment;
-    rows.push([
-      b(sel("💵 Cash",     pm==="Cash"),         p("method","cash")),
-      b(sel("📱 QRIS",     pm==="QRIS"),         p("method","qris")),
-      b(sel("💳 Card",     pm==="Debit/Credit"), p("method","card")),
-      b(sel("🏦 Transfer", pm==="Transfer"),     p("method","transfer"))
-    ]);
-  }
-
-  rows.push([
-    b("✅ Confirm & save", p("confirm","1")),
-    b("❌ Cancel",          p("cancel","1"))
-  ]);
-
-  return { inline_keyboard: rows };
+// ── session state ────────────────────────────────────────────────────────────
+async function getSession(tripId, user) {
+  if (!user?.id) return null;
+  const snap = await pendingRef(tripId, user).get();
+  if (!snap.exists) return null;
+  const d = snap.data();
+  return (d.type === "session") ? d : null;
 }
 
-async function startExpensePanel(tripId, user, member, chatId, initialData) {
+async function setSession(tripId, user, expenseId, draftMsgId, chatId) {
+  await pendingRef(tripId, user).set({
+    type: "session", expenseId,
+    draftMsgId: draftMsgId || null,
+    chatId: String(chatId || ""),
+    updatedAt: nowField()
+  }, { merge: false });
+}
+
+async function clearSession(tripId, user) {
+  await pendingRef(tripId, user).delete();
+}
+
+// Edit the one draft message in-place (no new message)
+async function refreshSessionMsg(tripId, user, draft, prompt = "") {
+  const sess = await getSession(tripId, user);
+  if (!sess?.draftMsgId || !sess?.chatId) return;
+  await editTelegramMessage(Number(sess.chatId), sess.draftMsgId,
+    sessionText(draft, prompt), { reply_markup: sessionKeyboard(draft) });
+}
+
+// ── start an expense (text command or OCR) ───────────────────────────────────
+async function startExpense(tripId, user, member, chatId, initialData) {
   const isMeal = initialData.category === "Food & Drinks";
   const draft = {
     id: id("tg-exp"),
@@ -798,8 +798,8 @@ async function startExpensePanel(tripId, user, member, chatId, initialData) {
     place: initialData.place || "", vendor: initialData.vendor || "",
     amount: initialData.amount || 0,
     payer: initialData.payer || member?.member || "TJ",
-    payment: initialData.payment || "Cash",
-    split: isMeal ? "Custom" : (initialData.split || "Shared by Units"),
+    payment: "Cash",
+    split: isMeal ? "Custom" : "Shared by Units",
     billSplitMode: isMeal ? "Meal/order split" : "Off",
     billIncludesTaxService: "Yes",
     foodTJAmount: 0, foodEKAmount: 0, foodSharedAmount: 0, taxServiceAmount: 0,
@@ -810,42 +810,15 @@ async function startExpensePanel(tripId, user, member, chatId, initialData) {
     createdAt: nowField(), updatedAt: nowField()
   };
   await saveExpense(tripId, draft);
-  await sendTelegramCapture(chatId, panelText(draft), { reply_markup: panelKeyboard(draft) });
+  const msgId = await sendTelegramCapture(chatId, sessionText(draft),
+    { reply_markup: sessionKeyboard(draft) });
+  await setSession(tripId, user, draft.id, msgId, chatId);
   return "";
 }
 
-// For meal amounts: store minimal pending state (just field + expenseId + panelMsgId)
-async function setPanelAmount(tripId, user, field, expenseId, panelMsgId) {
-  await pendingRef(tripId, user).set({
-    type: "panelAmount", field, expenseId,
-    panelMsgId: panelMsgId || null,
-    updatedAt: nowField()
-  }, { merge: false });
-}
+// ── command handlers (all edit the session message instead of sending new) ───
 
-async function consumePanelAmount(tripId, user, chatId, text) {
-  if (!user?.id || text.startsWith("/")) return null;
-  const snap = await pendingRef(tripId, user).get();
-  if (!snap.exists) return null;
-  const state = snap.data();
-  if (state.type !== "panelAmount") return null;
-  const amount = num(text);
-  if (!amount) {
-    return telegramResponse("Type a number, e.g. <code>85000</code>", {
-      reply_markup: { force_reply: true, input_field_placeholder: "85000" }
-    });
-  }
-  await pendingRef(tripId, user).delete();
-  const updated = await updateDraft(tripId, state.expenseId, { [state.field]: amount });
-  if (!updated) return "Draft not found.";
-  if (state.panelMsgId) {
-    await editTelegramMessage(chatId, state.panelMsgId, panelText(updated),
-      { reply_markup: panelKeyboard(updated) });
-  }
-  return "";
-}
-
-async function consumePendingAmount(tripId, user, text, member) {
+async function consumePendingAmount(tripId, user, chatId, text, member) {
   if (!user?.id || text.startsWith("/")) return null;
   const ref = pendingRef(tripId, user);
   const snap = await ref.get();
@@ -858,94 +831,68 @@ async function consumePendingAmount(tripId, user, text, member) {
   });
   await ref.delete();
   const expenseId = state.expenseId || (await findLatestDraftExpense(tripId, member))?.id;
-  if (!expenseId) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  if (!expenseId) return "No draft found. Use /meal to start.";
   const updated = await updateDraft(tripId, expenseId, mealAmountPatch(state.field, amount));
-  if (!updated) return `No expense found for <code>${expenseId}</code>.`;
-  return telegramResponse([
-    "Meal amount saved.",
-    ocrDraftText(updated)
-  ].join("\n"), { reply_markup: ocrMealKeyboard() });
+  if (!updated) return "Draft not found.";
+  await refreshSessionMsg(tripId, user, updated);
+  return "";
 }
 
-async function setCategoryDraft(tripId, args, member) {
+async function setCategoryDraft(tripId, args, member, user) {
   const category = categoryUpdate(args.join(" ") || "Other");
   const draft = await findLatestDraftExpense(tripId, member);
-  if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  if (!draft) return "No draft. Use /meal or /expense first.";
   const patch = { category };
-  if (category !== "Food & Drinks") {
+  if (category === "Food & Drinks") {
+    patch.split = "Custom"; patch.billSplitMode = "Meal/order split";
+  } else {
     patch.billSplitMode = "Off";
     if (draft.split === "Custom") patch.split = "Shared by Units";
   }
   const updated = await updateDraft(tripId, draft.id, patch);
-  const keyboard = category === "Food & Drinks" ? ocrMealKeyboard() : ocrGeneralKeyboard();
-  return telegramResponse([
-    `Category set to <b>${htmlEscape(category)}</b>.`,
-    ocrDraftText(updated)
-  ].join("\n"), { reply_markup: keyboard });
+  await refreshSessionMsg(tripId, user, updated);
+  return "";
 }
 
-async function enableMealSplit(tripId, member) {
+async function enableMealSplit(tripId, member, user) {
   const draft = await findLatestDraftExpense(tripId, member);
-  if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  if (!draft) return "No draft. Use /meal or /expense first.";
   const updated = await updateDraft(tripId, draft.id, {
-    category: "Food & Drinks",
-    split: "Custom",
-    billSplitMode: "Meal/order split",
-    billIncludesTaxService: "Yes"
+    category: "Food & Drinks", split: "Custom",
+    billSplitMode: "Meal/order split", billIncludesTaxService: "Yes"
   });
-  return telegramResponse([
-    "Meal split enabled.",
-    "Tap TJ food, EK food, Shared, or Tax/service, then type the amount.",
-    ocrDraftText(updated)
-  ].join("\n"), { reply_markup: ocrMealKeyboard() });
+  await refreshSessionMsg(tripId, user, updated);
+  return "";
 }
 
 async function promptMealAmount(tripId, user, member, field, args) {
   const draft = await findLatestDraftExpense(tripId, member);
-  if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
+  if (!draft) return "No draft. Use /meal or /expense first.";
   const typedAmount = num(args[0]);
   if (typedAmount) {
     const updated = await updateDraft(tripId, draft.id, mealAmountPatch(field, typedAmount));
-    return telegramResponse([
-      "Meal amount saved.",
-      ocrDraftText(updated)
-    ].join("\n"), { reply_markup: ocrMealKeyboard() });
+    await refreshSessionMsg(tripId, user, updated);
+    return "";
   }
   await setPendingAmount(tripId, user, field, draft.id);
-  const label = {
-    tjfood: "TJ food",
-    ekfood: "EK food",
-    shared: "shared food",
-    tax: "tax/service"
-  }[field];
-  return telegramResponse(`Type amount for <b>${label}</b>. Example: <code>150000</code>`, {
-    reply_markup: { force_reply: true, input_field_placeholder: "150000" }
-  });
+  const label = { tjfood:"TJ food", ekfood:"EK food", shared:"shared food", tax:"tax/service" }[field];
+  // Update draft message to show what we're waiting for
+  await refreshSessionMsg(tripId, user, draft, `⏳ Type amount for <b>${label}</b>:`);
+  return "";
 }
 
-async function setDraftExpense(tripId, args, member) {
+async function setDraftExpense(tripId, args, member, user) {
   let expenseId = args[0] && /^ocr-exp-|^tg-exp-|^web-exp-/i.test(args[0]) ? args[0] : "";
   const setArgs = expenseId ? args.slice(1) : args;
   const patch = parseSetPatch(setArgs);
-  if (!Object.keys(patch).length) {
-    return "Use <code>/set paid TJ split 50/50 payment QRIS</code>";
-  }
-  if (!expenseId) {
-    const draft = await findLatestDraftExpense(tripId, member);
-    expenseId = draft?.id || "";
-  }
-  if (!expenseId) return "No draft found. Send a receipt with <code>/receipt</code> first.";
-
+  if (!Object.keys(patch).length) return "Use <code>/set paid TJ split 50/50 payment QRIS</code>";
+  if (!expenseId) expenseId = (await findLatestDraftExpense(tripId, member))?.id || "";
+  if (!expenseId) return "No draft. Use /meal or /expense first.";
   const updated = await updateDraft(tripId, expenseId, patch);
-  if (!updated) return `No expense found for <code>${expenseId}</code>.`;
-  if (updated.alreadyConfirmed) return `Already confirmed <code>${expenseId}</code>.`;
-  return [
-    "Draft updated.",
-    ocrDraftText(updated),
-    "",
-    "Confirm when ready:",
-    "<code>/confirm</code>"
-  ].join("\n");
+  if (!updated) return "Draft not found.";
+  if (updated.alreadyConfirmed) return "Already confirmed.";
+  await refreshSessionMsg(tripId, user, updated);
+  return "";
 }
 
 async function downloadTelegramFile(fileId) {
@@ -1061,8 +1008,10 @@ async function handlePhoto(tripId, message, member, user, chatId) {
     updatedAt: nowField()
   });
   await saveExpense(tripId, draft);
-  if (chatId) {
-    await sendTelegramCapture(chatId, panelText(draft), { reply_markup: panelKeyboard(draft) });
+  if (chatId && user?.id) {
+    const msgId = await sendTelegramCapture(chatId, sessionText(draft),
+      { reply_markup: sessionKeyboard(draft) });
+    await setSession(tripId, user, draft.id, msgId, chatId);
     return "";
   }
   return telegramResponse(ocrDraftText(draft, ocr), { reply_markup: ocrCommandKeyboard() });
@@ -1116,10 +1065,8 @@ async function handleCommand(tripId, message) {
   const member = await getMemberByTelegram(tripId, user);
   const [commandRaw, ...args] = text.split(/\s+/);
   const command = commandRaw.toLowerCase().replace(/@[\w_]+$/, "");
-  const panelResult = await consumePanelAmount(tripId, user, chatId, text);
-  if (panelResult !== null) return panelResult;
-  const pendingResult = await consumePendingAmount(tripId, user, text, member);
-  if (pendingResult) return pendingResult;
+  const pendingResult = await consumePendingAmount(tripId, user, chatId, text, member);
+  if (pendingResult !== null) return pendingResult || "";
 
   if (command === "/start" || command === "/help") {
     return helpText();
@@ -1159,20 +1106,38 @@ async function handleCommand(tripId, message) {
 
   if (command === "/confirm") {
     const result = await confirmExpense(tripId, args[0], member);
+    const sess = await getSession(tripId, user);
+    if (result.ok && sess?.draftMsgId && sess?.chatId) {
+      await editTelegramMessage(Number(sess.chatId), sess.draftMsgId,
+        `✅ ${result.message}`, { reply_markup: { remove_keyboard: true } });
+      await clearSession(tripId, user);
+      return "";
+    }
     return telegramResponse(result.message, result.ok ? { reply_markup: { remove_keyboard: true } } : {});
   }
 
+  if (command === "/cancel") {
+    const sess = await getSession(tripId, user);
+    if (sess?.draftMsgId && sess?.chatId) {
+      await editTelegramMessage(Number(sess.chatId), sess.draftMsgId,
+        "❌ Expense cancelled.", { reply_markup: { remove_keyboard: true } });
+      await clearSession(tripId, user);
+      return "";
+    }
+    await pendingRef(tripId, user).delete();
+    return "Cancelled.";
+  }
+
   if (command === "/set" || command === "/editdraft") {
-    const result = await setDraftExpense(tripId, args, member);
-    return telegramResponse(result, { reply_markup: ocrGeneralKeyboard() });
+    return setDraftExpense(tripId, args, member, user);
   }
 
   if (command === "/cat" || command === "/category") {
-    return setCategoryDraft(tripId, args, member);
+    return setCategoryDraft(tripId, args, member, user);
   }
 
-  if (command === "/meal") {
-    return enableMealSplit(tripId, member);
+  if (command === "/meal" && !text.match(/\d{3,}/)) {
+    return enableMealSplit(tripId, member, user);
   }
 
   if (command === "/tjfood" || command === "/ekfood" || command === "/shared" || command === "/tax") {
@@ -1181,22 +1146,10 @@ async function handleCommand(tripId, message) {
 
   if (command === "/notax") {
     const draft = await findLatestDraftExpense(tripId, member);
-    if (!draft) return "No draft found. Send a receipt with <code>/receipt</code> first.";
-    const updated = await updateDraft(tripId, draft.id, {
-      billIncludesTaxService: "No",
-      taxServiceAmount: 0
-    });
-    return telegramResponse([
-      "Tax/service removed.",
-      ocrDraftText(updated)
-    ].join("\n"), { reply_markup: ocrMealKeyboard() });
-  }
-
-  if (command === "/cancel") {
-    const snap = await pendingRef(tripId, user).get();
-    if (!snap.exists) return "Nothing to cancel.";
-    await pendingRef(tripId, user).delete();
-    return "Cancelled.";
+    if (!draft) return "No draft. Use /meal or /expense first.";
+    const updated = await updateDraft(tripId, draft.id, { billIncludesTaxService: "No", taxServiceAmount: 0 });
+    await refreshSessionMsg(tripId, user, updated);
+    return "";
   }
 
   if (command === "/hidekeys" || command === "/hidekeyboard") {
@@ -1210,7 +1163,7 @@ async function handleCommand(tripId, message) {
 
   if (command === "/expense" || command === "/exp" || command === "/meal" || command === "/food" || command === "/makan") {
     const parsed = parseExpenseText(text, member);
-    return startExpensePanel(tripId, user, member, chatId, parsed);
+    return startExpense(tripId, user, member, chatId, parsed);
   }
 
   if (message.photo) return handlePhoto(tripId, message, member, user, chatId);
@@ -1280,63 +1233,6 @@ async function handleCallback(tripId, callbackQuery) {
     const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: ocrDraftKeyboard(expenseId) });
     if (!editResponse?.ok) {
       await sendTelegram(chatId, `${label}\n\n${text}`, { reply_markup: ocrDraftKeyboard(expenseId) });
-    }
-    return;
-  }
-
-  if (data.startsWith("panel:")) {
-    // Answer immediately so the button never times out
-    await answerCallbackQuery(callbackQuery.id, "");
-    try {
-      const parts      = data.split(":");
-      const action     = parts[1];
-      const expenseId  = parts[2];
-      const value      = parts[3];
-
-      if (action === "cancel") {
-        await editTelegramMessage(chatId, messageId, "❌ Expense cancelled.");
-        return;
-      }
-
-      if (action === "confirm") {
-        const member = await getMemberByTelegram(tripId, user);
-        const result = await confirmExpense(tripId, expenseId, member);
-        await editTelegramMessage(chatId, messageId, result.message);
-        return;
-      }
-
-      if (action === "meal") {
-        const fieldMap = { tj:"foodTJAmount", ek:"foodEKAmount", shared:"foodSharedAmount", tax:"taxServiceAmount" };
-        const field = fieldMap[value];
-        if (!field) return;
-        await setPanelAmount(tripId, user, field, expenseId, messageId);
-        const labels = { tj:"TJ's food", ek:"EK's food", shared:"shared dishes", tax:"tax & service" };
-        await sendTelegram(chatId, `Type amount for <b>${labels[value]}</b>:`, {
-          reply_markup: { force_reply: true, input_field_placeholder: "85000" }
-        });
-        return;
-      }
-
-      let patch = null;
-      if (action === "cat") {
-        const category = CATEGORY_KEY_MAP[value] || "Other";
-        const isMeal   = category === "Food & Drinks";
-        patch = { category, split: isMeal ? "Custom" : "Shared by Units",
-                  billSplitMode: isMeal ? "Meal/order split" : "Off" };
-      } else if (action === "pay")  { patch = { payer: normalizeMemberName(value) }; }
-      else if (action === "split")  { patch = splitUpdate(value); }
-      else if (action === "method") { patch = { payment: paymentUpdate(value) }; }
-
-      if (!patch) return;
-
-      const updated = await updateDraftFromCallback(tripId, expenseId, patch);
-      if (!updated || updated.alreadyConfirmed) return;
-
-      await editTelegramMessage(chatId, messageId, panelText(updated),
-        { reply_markup: panelKeyboard(updated) });
-    } catch (err) {
-      logger.error("panel callback error", err);
-      await sendTelegram(chatId, `⚠️ Error: ${htmlEscape(err.message || "unknown")}`);
     }
     return;
   }
