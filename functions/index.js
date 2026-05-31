@@ -1285,51 +1285,59 @@ async function handleCallback(tripId, callbackQuery) {
   }
 
   if (data.startsWith("panel:")) {
-    const [, action, expenseId, value] = data.split(":");
-    const member = await getMemberByTelegram(tripId, user);
+    // Answer immediately so the button never times out
+    await answerCallbackQuery(callbackQuery.id, "");
+    try {
+      const parts      = data.split(":");
+      const action     = parts[1];
+      const expenseId  = parts[2];
+      const value      = parts[3];
 
-    if (action === "cancel") {
-      await answerCallbackQuery(callbackQuery.id, "Cancelled");
-      await editTelegramMessage(chatId, messageId, "❌ Expense cancelled.");
-      return;
+      if (action === "cancel") {
+        await editTelegramMessage(chatId, messageId, "❌ Expense cancelled.");
+        return;
+      }
+
+      if (action === "confirm") {
+        const member = await getMemberByTelegram(tripId, user);
+        const result = await confirmExpense(tripId, expenseId, member);
+        await editTelegramMessage(chatId, messageId, result.message);
+        return;
+      }
+
+      if (action === "meal") {
+        const fieldMap = { tj:"foodTJAmount", ek:"foodEKAmount", shared:"foodSharedAmount", tax:"taxServiceAmount" };
+        const field = fieldMap[value];
+        if (!field) return;
+        await setPanelAmount(tripId, user, field, expenseId, messageId);
+        const labels = { tj:"TJ's food", ek:"EK's food", shared:"shared dishes", tax:"tax & service" };
+        await sendTelegram(chatId, `Type amount for <b>${labels[value]}</b>:`, {
+          reply_markup: { force_reply: true, input_field_placeholder: "85000" }
+        });
+        return;
+      }
+
+      let patch = null;
+      if (action === "cat") {
+        const category = CATEGORY_KEY_MAP[value] || "Other";
+        const isMeal   = category === "Food & Drinks";
+        patch = { category, split: isMeal ? "Custom" : "Shared by Units",
+                  billSplitMode: isMeal ? "Meal/order split" : "Off" };
+      } else if (action === "pay")  { patch = { payer: normalizeMemberName(value) }; }
+      else if (action === "split")  { patch = splitUpdate(value); }
+      else if (action === "method") { patch = { payment: paymentUpdate(value) }; }
+
+      if (!patch) return;
+
+      const updated = await updateDraftFromCallback(tripId, expenseId, patch);
+      if (!updated || updated.alreadyConfirmed) return;
+
+      await editTelegramMessage(chatId, messageId, panelText(updated),
+        { reply_markup: panelKeyboard(updated) });
+    } catch (err) {
+      logger.error("panel callback error", err);
+      await sendTelegram(chatId, `⚠️ Error: ${htmlEscape(err.message || "unknown")}`);
     }
-
-    if (action === "confirm") {
-      await answerCallbackQuery(callbackQuery.id, "Saving...");
-      const result = await confirmExpense(tripId, expenseId, member);
-      await editTelegramMessage(chatId, messageId, result.message);
-      return;
-    }
-
-    if (action === "meal") {
-      const fieldMap = { tj:"foodTJAmount", ek:"foodEKAmount", shared:"foodSharedAmount", tax:"taxServiceAmount" };
-      const field = fieldMap[value];
-      if (!field) { await answerCallbackQuery(callbackQuery.id); return; }
-      await answerCallbackQuery(callbackQuery.id, "Type the amount ↓");
-      await setPanelAmount(tripId, user, field, expenseId, messageId);
-      const labels = { tj:"TJ's food", ek:"EK's food", shared:"shared dishes", tax:"tax & service" };
-      await sendTelegram(chatId, `Type amount for <b>${labels[value]}</b>:`, {
-        reply_markup: { force_reply: true, input_field_placeholder: "85000" }
-      });
-      return;
-    }
-
-    let patch = null;
-    if (action === "cat") {
-      const category = CATEGORY_KEY_MAP[value] || "Other";
-      const isMeal   = category === "Food & Drinks";
-      patch = { category, split: isMeal ? "Custom" : "Shared by Units",
-                billSplitMode: isMeal ? "Meal/order split" : "Off" };
-    } else if (action === "pay")    { patch = { payer: normalizeMemberName(value) }; }
-    else if (action === "split")    { patch = splitUpdate(value); }
-    else if (action === "method")   { patch = { payment: paymentUpdate(value) }; }
-
-    if (!patch) { await answerCallbackQuery(callbackQuery.id); return; }
-    await answerCallbackQuery(callbackQuery.id, "✓");
-    const updated = await updateDraftFromCallback(tripId, expenseId, patch);
-    if (!updated || updated.alreadyConfirmed) return;
-    await editTelegramMessage(chatId, messageId, panelText(updated),
-      { reply_markup: panelKeyboard(updated) });
     return;
   }
 
