@@ -684,12 +684,17 @@ function pendingRef(tripId, user) {
 }
 
 async function setPendingAmount(tripId, user, field, expenseId) {
+  // Carry draftMsgId/chatId so the session can be restored after the amount is consumed.
+  // Without this, getSession returns null (type !== "session") and refreshSessionMsg silently stops working.
+  const sess = await getSession(tripId, user);
   await pendingRef(tripId, user).set({
     type: "mealAmount",
     field,
     expenseId,
+    draftMsgId: sess?.draftMsgId || null,
+    chatId: sess?.chatId || "",
     updatedAt: nowField()
-  }, { merge: true });
+  }, { merge: false });
 }
 
 // ============================================================
@@ -724,7 +729,8 @@ function sessionKeyboard(draft) {
       [{ text: "/cat Ferry" }, { text: "/cat Hotel" }, { text: "/cat Other" }],
       [{ text: "/set paid TJ" },          { text: "/set paid EK" }],
       [{ text: "/set split units" },      { text: "/set split 50/50" }],
-      [{ text: "/set payment QRIS" },     { text: "/set payment Cash" }],
+      [{ text: "/set payment Cash" },     { text: "/set payment QRIS" },   { text: "/set payment Card" }],
+      [{ text: "/set payment Transfer" }, { text: "/set payment emoney" }],
       [{ text: "/confirm" },              { text: "/cancel" }]
     ],
     resize_keyboard: true, one_time_keyboard: false,
@@ -779,12 +785,13 @@ async function clearSession(tripId, user) {
   await pendingRef(tripId, user).delete();
 }
 
-// Edit the one draft message in-place (no new message)
+// Edit the one draft message in-place (no new message).
+// reply_markup is intentionally omitted — editMessageText only accepts InlineKeyboardMarkup,
+// not ReplyKeyboardMarkup. The reply keyboard persists in the chat automatically.
 async function refreshSessionMsg(tripId, user, draft, prompt = "") {
   const sess = await getSession(tripId, user);
   if (!sess?.draftMsgId || !sess?.chatId) return;
-  await editTelegramMessage(Number(sess.chatId), sess.draftMsgId,
-    sessionText(draft, prompt), { reply_markup: sessionKeyboard(draft) });
+  await editTelegramMessage(Number(sess.chatId), sess.draftMsgId, sessionText(draft, prompt));
 }
 
 // ── start an expense (text command or OCR) ───────────────────────────────────
@@ -829,9 +836,15 @@ async function consumePendingAmount(tripId, user, chatId, text, member) {
   if (!amount) return telegramResponse("Type the amount as digits, e.g. <code>150000</code>.", {
     reply_markup: { force_reply: true, input_field_placeholder: "150000" }
   });
-  await ref.delete();
+  const { draftMsgId, chatId: savedChatId } = state;
   const expenseId = state.expenseId || (await findLatestDraftExpense(tripId, member))?.id;
-  if (!expenseId) return "No draft found. Use /meal to start.";
+  if (!expenseId) { await ref.delete(); return "No draft found. Use /meal to start."; }
+  // Restore session BEFORE deleting the mealAmount state so refreshSessionMsg can find it
+  if (draftMsgId && savedChatId) {
+    await setSession(tripId, user, expenseId, draftMsgId, savedChatId);
+  } else {
+    await ref.delete();
+  }
   const updated = await updateDraft(tripId, expenseId, mealAmountPatch(state.field, amount));
   if (!updated) return "Draft not found.";
   await refreshSessionMsg(tripId, user, updated);
@@ -1108,24 +1121,26 @@ async function handleCommand(tripId, message) {
     const result = await confirmExpense(tripId, args[0], member);
     const sess = await getSession(tripId, user);
     if (result.ok && sess?.draftMsgId && sess?.chatId) {
-      await editTelegramMessage(Number(sess.chatId), sess.draftMsgId,
-        `✅ ${result.message}`, { reply_markup: { remove_keyboard: true } });
+      // Update draft message text only (no reply_markup — editMessageText doesn't accept ReplyKeyboardMarkup)
+      await editTelegramMessage(Number(sess.chatId), sess.draftMsgId, `✅ ${result.message}`);
       await clearSession(tripId, user);
-      return "";
     }
-    return telegramResponse(result.message, result.ok ? { reply_markup: { remove_keyboard: true } } : {});
+    // Always send a new message to dismiss the reply keyboard and confirm to the user
+    return telegramResponse(
+      result.ok ? `✅ ${result.message}` : result.message,
+      { reply_markup: { remove_keyboard: true } }
+    );
   }
 
   if (command === "/cancel") {
     const sess = await getSession(tripId, user);
     if (sess?.draftMsgId && sess?.chatId) {
-      await editTelegramMessage(Number(sess.chatId), sess.draftMsgId,
-        "❌ Expense cancelled.", { reply_markup: { remove_keyboard: true } });
+      await editTelegramMessage(Number(sess.chatId), sess.draftMsgId, "❌ Expense cancelled.");
       await clearSession(tripId, user);
-      return "";
+    } else {
+      await pendingRef(tripId, user).delete();
     }
-    await pendingRef(tripId, user).delete();
-    return "Cancelled.";
+    return telegramResponse("Cancelled.", { reply_markup: { remove_keyboard: true } });
   }
 
   if (command === "/set" || command === "/editdraft") {
