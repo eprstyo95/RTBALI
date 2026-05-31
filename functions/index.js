@@ -692,10 +692,9 @@ async function setPendingAmount(tripId, user, field, expenseId) {
 // ============================================================
 // EXPENSE WIZARD — guided multi-step entry, one message edited in-place
 // ============================================================
-
-// step order: category → payer → (food: meal_tj/ek/shared/tax | other: split/payment) → done
-const WIZARD_FOOD_STEPS  = ["category","payer","meal_tj","meal_ek","meal_shared","meal_tax","done"];
-const WIZARD_OTHER_STEPS = ["category","payer","split","payment","done"];
+// EXPENSE PANEL — single inline message, edited in place on every tap
+// No wizard state. messageId comes from the callback itself.
+// ============================================================
 
 const CATEGORY_KEY_MAP = {
   food:"Food & Drinks", fuel:"Fuel/Diesel", toll:"Toll/e-Money",
@@ -703,132 +702,106 @@ const CATEGORY_KEY_MAP = {
   activity:"Activity/Tickets", needs:"Necessities", other:"Other"
 };
 
-function wizardNextStep(draft, currentStep) {
-  const steps = draft.category === "Food & Drinks" ? WIZARD_FOOD_STEPS : WIZARD_OTHER_STEPS;
-  const idx = steps.indexOf(currentStep);
-  return idx >= 0 ? (steps[idx + 1] || "done") : "done";
+function shortAmt(v) {
+  const n = num(v);
+  if (!n) return "—";
+  if (n >= 1000000) return `${(n/1000000).toFixed(1)}M`;
+  if (n >= 1000)    return `${Math.round(n/1000)}k`;
+  return String(n);
 }
 
-function wizardStepKeyboard(expenseId, step, draft) {
-  const b  = (text, data) => ({ text, callback_data: data });
-  const w  = (a, v) => `wiz:${a}:${expenseId}:${v}`;
-  const ch = (label, field, val) => `${draft[field] === val ? "✓ " : ""}${label}`;
-
-  if (step === "category") return { inline_keyboard: [
-    [b("🍽 Food & Drinks", w("cat","food")),  b("⛽ Fuel/Diesel",  w("cat","fuel"))],
-    [b("🛣 Toll/e-Money",  w("cat","toll")),  b("⛴ Ferry",        w("cat","ferry"))],
-    [b("🏨 Hotel",         w("cat","hotel")), b("🅿 Parking",      w("cat","parking"))],
-    [b("🎡 Activity",      w("cat","activity")), b("🛒 Other",     w("cat","other"))]
-  ]};
-  if (step === "payer") return { inline_keyboard: [[
-    b(ch("💳 TJ paid","payer","TJ"),  w("payer","TJ")),
-    b(ch("💳 EK paid","payer","EK"),  w("payer","EK"))
-  ]]};
-  if (step === "split") return { inline_keyboard: [
-    [b(ch("⚖️ Shared units","split","Shared by Units"), w("split","units")),
-     b(ch("½ 50/50","split","Equal 50/50"),              w("split","5050"))],
-    [b(ch("👤 TJ only","split","TJ only"),   w("split","tj")),
-     b(ch("👤 EK only","split","EK only"),   w("split","ek"))]
-  ]};
-  if (step === "payment") return { inline_keyboard: [
-    [b(ch("💵 Cash","payment","Cash"),             w("pay","cash")),
-     b(ch("📱 QRIS","payment","QRIS"),             w("pay","qris")),
-     b(ch("💳 Card","payment","Debit/Credit"),     w("pay","card"))],
-    [b(ch("🏦 Transfer","payment","Transfer"),     w("pay","transfer")),
-     b(ch("💰 e-Money","payment","e-Money"),       w("pay","emoney"))],
-    [b("⏭ Skip", w("skip","payment"))]
-  ]};
-  if (step === "meal_shared" || step === "meal_tax") return { inline_keyboard: [[
-    b("⏭ Skip (0)", w("skip", step))
-  ]]};
-  if (step === "done") return { inline_keyboard: [[
-    b("✅ Confirm & save", w("confirm","1")),
-    b("❌ Cancel",          w("cancel","1"))
-  ]]};
-  return null;
-}
-
-function wizardStepPrompt(step) {
-  return {
-    category:    "📂 <b>What category?</b>",
-    payer:       "💳 <b>Who paid?</b>",
-    split:       "⚖️ <b>How to split?</b>",
-    payment:     "💳 <b>Payment method?</b>",
-    meal_tj:     "🍽 <b>TJ's food amount?</b>  — type the amount (e.g. <code>85000</code>)",
-    meal_ek:     "🍽 <b>EK's food amount?</b>  — type the amount",
-    meal_shared: "🍽 <b>Shared dishes?</b>  — type amount or tap Skip",
-    meal_tax:    "🧾 <b>Tax & service?</b>  — type amount or tap Skip",
-    done:        "✅ <b>All set — confirm to save or cancel</b>"
-  }[step] || "";
-}
-
-function wizardDraftSummary(draft) {
+function panelText(draft) {
   const isMeal = draft.billSplitMode === "Meal/order split";
-  const lines  = [`<b>🧾 New expense</b>`];
-  if (draft.category) lines.push(`Category: <b>${htmlEscape(draft.category)}</b>`);
-  if (num(draft.amount)) lines.push(`Amount: <b>${rupiah(draft.amount)}</b>`);
-  if (draft.payer)       lines.push(`Payer: <b>${draft.payer}</b>`);
+  const lines  = ["🧾 <b>New expense</b>"];
+  if (draft.category) lines.push(`📂 ${htmlEscape(draft.category)}`);
+  if (num(draft.amount)) lines.push(`💰 ${rupiah(draft.amount)}`);
+  if (draft.vendor)   lines.push(`🏪 ${htmlEscape(draft.vendor)}`);
+  if (draft.payer)    lines.push(`💳 Paid by <b>${draft.payer}</b>`);
   if (isMeal) {
     const parts = [];
-    if (num(draft.foodTJAmount))    parts.push(`TJ ${rupiah(draft.foodTJAmount)}`);
-    if (num(draft.foodEKAmount))    parts.push(`EK ${rupiah(draft.foodEKAmount)}`);
-    if (num(draft.foodSharedAmount))parts.push(`shared ${rupiah(draft.foodSharedAmount)}`);
-    if (num(draft.taxServiceAmount))parts.push(`tax ${rupiah(draft.taxServiceAmount)}`);
-    if (parts.length) lines.push(`Split: ${parts.join(" · ")}`);
+    if (num(draft.foodTJAmount))     parts.push(`TJ ${rupiah(draft.foodTJAmount)}`);
+    if (num(draft.foodEKAmount))     parts.push(`EK ${rupiah(draft.foodEKAmount)}`);
+    if (num(draft.foodSharedAmount)) parts.push(`shared ${rupiah(draft.foodSharedAmount)}`);
+    if (num(draft.taxServiceAmount)) parts.push(`tax ${rupiah(draft.taxServiceAmount)}`);
+    if (parts.length) lines.push(`🍽 ${parts.join("  ·  ")}`);
     const s = shares(draft);
-    if (s.TJ || s.EK) lines.push(`→ TJ <b>${rupiah(Math.round(s.TJ))}</b>  EK <b>${rupiah(Math.round(s.EK))}</b>`);
+    if (s.TJ || s.EK) lines.push(`→ TJ <b>${rupiah(Math.round(s.TJ))}</b>   EK <b>${rupiah(Math.round(s.EK))}</b>`);
   } else {
-    if (draft.split && draft.split !== "Shared by Units") lines.push(`Split: ${draft.split}`);
-    if (draft.payment && draft.payment !== "Cash")        lines.push(`Via: ${draft.payment}`);
+    if (draft.split && draft.split !== "Shared by Units") lines.push(`⚖️ ${draft.split}`);
+    if (draft.payment && draft.payment !== "Cash")        lines.push(`💳 ${draft.payment}`);
   }
-  if (draft.vendor) lines.push(`At: ${htmlEscape(draft.vendor)}`);
   return lines.join("\n");
 }
 
-function wizardMessage(draft, step) {
-  return `${wizardDraftSummary(draft)}\n\n${wizardStepPrompt(step)}`;
+function panelKeyboard(draft) {
+  const b   = (text, data) => ({ text, callback_data: data });
+  const p   = (a, v) => `panel:${a}:${draft.id}:${v}`;
+  const sel = (label, match) => match ? `✓ ${label}` : label;
+  const cat = draft.category;
+  const isMeal = draft.billSplitMode === "Meal/order split";
+
+  const rows = [
+    // category row 1
+    [b(sel("🍽 Food", cat==="Food & Drinks"),  p("cat","food")),
+     b(sel("⛽ Fuel",  cat==="Fuel/Diesel"),   p("cat","fuel")),
+     b(sel("🛣 Toll",  cat==="Toll/e-Money"),  p("cat","toll")),
+     b(sel("⛴ Ferry", cat==="Ferry"),          p("cat","ferry"))],
+    // category row 2
+    [b(sel("🏨 Hotel",    cat==="Hotel"),             p("cat","hotel")),
+     b(sel("🅿 Parking",  cat==="Parking"),           p("cat","parking")),
+     b(sel("🎡 Activity", cat==="Activity/Tickets"),  p("cat","activity")),
+     b(sel("🛒 Other",    cat==="Other"),             p("cat","other"))],
+    // payer
+    [b(sel("💳 TJ paid", draft.payer==="TJ"), p("pay","TJ")),
+     b(sel("💳 EK paid", draft.payer==="EK"), p("pay","EK"))],
+  ];
+
+  if (isMeal) {
+    rows.push([
+      b(`🍽 TJ: ${shortAmt(draft.foodTJAmount)}`,     p("meal","tj")),
+      b(`🍽 EK: ${shortAmt(draft.foodEKAmount)}`,     p("meal","ek")),
+      b(`🤝 Shared: ${shortAmt(draft.foodSharedAmount)}`, p("meal","shared")),
+      b(`🧾 Tax: ${shortAmt(draft.taxServiceAmount)}`, p("meal","tax"))
+    ]);
+  } else {
+    const sp = draft.split;
+    rows.push([
+      b(sel("⚖️ Units", sp==="Shared by Units"), p("split","units")),
+      b(sel("½ 50/50",  sp==="Equal 50/50"),     p("split","5050")),
+      b(sel("👤 TJ",    sp==="TJ only"),          p("split","tj")),
+      b(sel("👤 EK",    sp==="EK only"),          p("split","ek"))
+    ]);
+    const pm = draft.payment;
+    rows.push([
+      b(sel("💵 Cash",     pm==="Cash"),         p("method","cash")),
+      b(sel("📱 QRIS",     pm==="QRIS"),         p("method","qris")),
+      b(sel("💳 Card",     pm==="Debit/Credit"), p("method","card")),
+      b(sel("🏦 Transfer", pm==="Transfer"),     p("method","transfer"))
+    ]);
+  }
+
+  rows.push([
+    b("✅ Confirm & save", p("confirm","1")),
+    b("❌ Cancel",          p("cancel","1"))
+  ]);
+
+  return { inline_keyboard: rows };
 }
 
-async function getWizardState(tripId, user) {
-  if (!user?.id) return null;
-  const snap = await pendingRef(tripId, user).get();
-  if (!snap.exists) return null;
-  const d = snap.data();
-  return d.type === "wizard" ? d : null;
-}
-
-async function setWizardState(tripId, user, step, expenseId, wizardMessageId) {
-  await pendingRef(tripId, user).set({
-    type: "wizard", step, expenseId,
-    wizardMessageId: wizardMessageId || null,
-    updatedAt: nowField()
-  }, { merge: false });
-}
-
-async function clearWizardState(tripId, user) {
-  await pendingRef(tripId, user).delete();
-}
-
-async function advanceWizard(tripId, user, chatId, expenseId, wizardMessageId, currentStep, patch) {
-  const updated = await updateDraft(tripId, expenseId, patch || {});
-  if (!updated) { await clearWizardState(tripId, user); return; }
-  const nextStep = wizardNextStep(updated, currentStep);
-  await setWizardState(tripId, user, nextStep, expenseId, wizardMessageId);
-  const kb = wizardStepKeyboard(expenseId, nextStep, updated);
-  await editTelegramMessage(chatId, wizardMessageId, wizardMessage(updated, nextStep),
-    kb ? { reply_markup: kb } : {});
-}
-
-// Start wizard for a brand-new draft (from text command)
-async function startExpenseWizard(tripId, user, member, chatId, initialData) {
+async function startExpensePanel(tripId, user, member, chatId, initialData) {
+  const isMeal = initialData.category === "Food & Drinks";
   const draft = {
     id: id("tg-exp"),
     date: initialData.date || todayIso(),
-    category: "", description: initialData.description || "",
+    category: initialData.category || "",
+    description: initialData.description || "",
     place: initialData.place || "", vendor: initialData.vendor || "",
     amount: initialData.amount || 0,
-    payer: member?.member || "TJ", payment: "Cash",
-    split: "Shared by Units", billSplitMode: "Off", billIncludesTaxService: "Yes",
+    payer: initialData.payer || member?.member || "TJ",
+    payment: initialData.payment || "Cash",
+    split: isMeal ? "Custom" : (initialData.split || "Shared by Units"),
+    billSplitMode: isMeal ? "Meal/order split" : "Off",
+    billIncludesTaxService: "Yes",
     foodTJAmount: 0, foodEKAmount: 0, foodSharedAmount: 0, taxServiceAmount: 0,
     customTJAmount: 0, customEKAmount: 0, notes: "",
     source: "telegram", status: "draft",
@@ -837,35 +810,38 @@ async function startExpenseWizard(tripId, user, member, chatId, initialData) {
     createdAt: nowField(), updatedAt: nowField()
   };
   await saveExpense(tripId, draft);
-  const msgId = await sendTelegramCapture(chatId, wizardMessage(draft, "category"),
-    { reply_markup: wizardStepKeyboard(draft.id, "category", draft) });
-  await setWizardState(tripId, user, "category", draft.id, msgId);
+  await sendTelegramCapture(chatId, panelText(draft), { reply_markup: panelKeyboard(draft) });
   return "";
 }
 
-// Attach wizard to an already-saved draft (from OCR)
-async function attachWizardToDraft(tripId, user, chatId, draft) {
-  const msgId = await sendTelegramCapture(chatId, wizardMessage(draft, "category"),
-    { reply_markup: wizardStepKeyboard(draft.id, "category", draft) });
-  await setWizardState(tripId, user, "category", draft.id, msgId);
+// For meal amounts: store minimal pending state (just field + expenseId + panelMsgId)
+async function setPanelAmount(tripId, user, field, expenseId, panelMsgId) {
+  await pendingRef(tripId, user).set({
+    type: "panelAmount", field, expenseId,
+    panelMsgId: panelMsgId || null,
+    updatedAt: nowField()
+  }, { merge: false });
 }
 
-async function consumeWizardInput(tripId, user, member, chatId, text) {
+async function consumePanelAmount(tripId, user, chatId, text) {
   if (!user?.id || text.startsWith("/")) return null;
-  const state = await getWizardState(tripId, user);
-  if (!state) return null;
-  const { step, expenseId, wizardMessageId } = state;
-  const amountSteps = ["meal_tj","meal_ek","meal_shared","meal_tax"];
-  if (!amountSteps.includes(step)) return null;
+  const snap = await pendingRef(tripId, user).get();
+  if (!snap.exists) return null;
+  const state = snap.data();
+  if (state.type !== "panelAmount") return null;
   const amount = num(text);
-  if (!amount && !["meal_shared","meal_tax"].includes(step)) {
-    return telegramResponse(`Type a number, e.g. <code>85000</code>`, {
+  if (!amount) {
+    return telegramResponse("Type a number, e.g. <code>85000</code>", {
       reply_markup: { force_reply: true, input_field_placeholder: "85000" }
     });
   }
-  const field = { meal_tj:"foodTJAmount", meal_ek:"foodEKAmount",
-                  meal_shared:"foodSharedAmount", meal_tax:"taxServiceAmount" }[step];
-  await advanceWizard(tripId, user, chatId, expenseId, wizardMessageId, step, { [field]: amount });
+  await pendingRef(tripId, user).delete();
+  const updated = await updateDraft(tripId, state.expenseId, { [state.field]: amount });
+  if (!updated) return "Draft not found.";
+  if (state.panelMsgId) {
+    await editTelegramMessage(chatId, state.panelMsgId, panelText(updated),
+      { reply_markup: panelKeyboard(updated) });
+  }
   return "";
 }
 
@@ -1085,12 +1061,10 @@ async function handlePhoto(tripId, message, member, user, chatId) {
     updatedAt: nowField()
   });
   await saveExpense(tripId, draft);
-  // Enter the guided wizard so user is asked category → payer → split step by step
-  if (user && chatId) {
-    await attachWizardToDraft(tripId, user, chatId, draft);
+  if (chatId) {
+    await sendTelegramCapture(chatId, panelText(draft), { reply_markup: panelKeyboard(draft) });
     return "";
   }
-  // Fallback if called without user context (shouldn't happen)
   return telegramResponse(ocrDraftText(draft, ocr), { reply_markup: ocrCommandKeyboard() });
 }
 
@@ -1142,8 +1116,8 @@ async function handleCommand(tripId, message) {
   const member = await getMemberByTelegram(tripId, user);
   const [commandRaw, ...args] = text.split(/\s+/);
   const command = commandRaw.toLowerCase().replace(/@[\w_]+$/, "");
-  const wizardResult = await consumeWizardInput(tripId, user, member, chatId, text);
-  if (wizardResult !== null) return wizardResult;
+  const panelResult = await consumePanelAmount(tripId, user, chatId, text);
+  if (panelResult !== null) return panelResult;
   const pendingResult = await consumePendingAmount(tripId, user, text, member);
   if (pendingResult) return pendingResult;
 
@@ -1219,11 +1193,10 @@ async function handleCommand(tripId, message) {
   }
 
   if (command === "/cancel") {
-    const state = await getWizardState(tripId, user);
-    if (!state) return "Nothing to cancel.";
-    await clearWizardState(tripId, user);
-    if (state.wizardMessageId) await editTelegramMessage(chatId, state.wizardMessageId, "❌ Expense cancelled.");
-    return "";
+    const snap = await pendingRef(tripId, user).get();
+    if (!snap.exists) return "Nothing to cancel.";
+    await pendingRef(tripId, user).delete();
+    return "Cancelled.";
   }
 
   if (command === "/hidekeys" || command === "/hidekeyboard") {
@@ -1237,7 +1210,7 @@ async function handleCommand(tripId, message) {
 
   if (command === "/expense" || command === "/exp" || command === "/meal" || command === "/food" || command === "/makan") {
     const parsed = parseExpenseText(text, member);
-    return startExpenseWizard(tripId, user, member, chatId, parsed);
+    return startExpensePanel(tripId, user, member, chatId, parsed);
   }
 
   if (message.photo) return handlePhoto(tripId, message, member, user, chatId);
@@ -1311,48 +1284,52 @@ async function handleCallback(tripId, callbackQuery) {
     return;
   }
 
-  if (data.startsWith("wiz:")) {
+  if (data.startsWith("panel:")) {
     const [, action, expenseId, value] = data.split(":");
     const member = await getMemberByTelegram(tripId, user);
-    const state = await getWizardState(tripId, user);
-    const wizMsgId = state?.wizardMessageId || messageId;
 
     if (action === "cancel") {
-      await clearWizardState(tripId, user);
       await answerCallbackQuery(callbackQuery.id, "Cancelled");
-      await editTelegramMessage(chatId, wizMsgId, "❌ Expense cancelled.");
+      await editTelegramMessage(chatId, messageId, "❌ Expense cancelled.");
       return;
     }
 
     if (action === "confirm") {
       await answerCallbackQuery(callbackQuery.id, "Saving...");
-      await clearWizardState(tripId, user);
       const result = await confirmExpense(tripId, expenseId, member);
-      await editTelegramMessage(chatId, wizMsgId, result.message);
+      await editTelegramMessage(chatId, messageId, result.message);
       return;
     }
 
-    await answerCallbackQuery(callbackQuery.id, "✓");
-    const currentStep = state?.step || "category";
-    let patch = null;
+    if (action === "meal") {
+      const fieldMap = { tj:"foodTJAmount", ek:"foodEKAmount", shared:"foodSharedAmount", tax:"taxServiceAmount" };
+      const field = fieldMap[value];
+      if (!field) { await answerCallbackQuery(callbackQuery.id); return; }
+      await answerCallbackQuery(callbackQuery.id, "Type the amount ↓");
+      await setPanelAmount(tripId, user, field, expenseId, messageId);
+      const labels = { tj:"TJ's food", ek:"EK's food", shared:"shared dishes", tax:"tax & service" };
+      await sendTelegram(chatId, `Type amount for <b>${labels[value]}</b>:`, {
+        reply_markup: { force_reply: true, input_field_placeholder: "85000" }
+      });
+      return;
+    }
 
+    let patch = null;
     if (action === "cat") {
       const category = CATEGORY_KEY_MAP[value] || "Other";
       const isMeal   = category === "Food & Drinks";
       patch = { category, split: isMeal ? "Custom" : "Shared by Units",
                 billSplitMode: isMeal ? "Meal/order split" : "Off" };
-    } else if (action === "payer") {
-      patch = { payer: normalizeMemberName(value) };
-    } else if (action === "split") {
-      patch = splitUpdate(value);
-    } else if (action === "pay") {
-      patch = { payment: paymentUpdate(value) };
-    } else if (action === "skip") {
-      await advanceWizard(tripId, user, chatId, expenseId, wizMsgId, value, {});
-      return;
-    }
+    } else if (action === "pay")    { patch = { payer: normalizeMemberName(value) }; }
+    else if (action === "split")    { patch = splitUpdate(value); }
+    else if (action === "method")   { patch = { payment: paymentUpdate(value) }; }
 
-    if (patch) await advanceWizard(tripId, user, chatId, expenseId, wizMsgId, currentStep, patch);
+    if (!patch) { await answerCallbackQuery(callbackQuery.id); return; }
+    await answerCallbackQuery(callbackQuery.id, "✓");
+    const updated = await updateDraftFromCallback(tripId, expenseId, patch);
+    if (!updated || updated.alreadyConfirmed) return;
+    await editTelegramMessage(chatId, messageId, panelText(updated),
+      { reply_markup: panelKeyboard(updated) });
     return;
   }
 
