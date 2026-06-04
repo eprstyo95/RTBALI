@@ -958,13 +958,16 @@ function ocrStatusText(ocr) {
 
 function parseOcrExpense(ocrText, member) {
   const lines = clean(ocrText).split(/\n+/).map(clean).filter(Boolean);
+  // Priority 1: last line with a total/jumlah/tagihan keyword
   const totalLine = [...lines].reverse().find((line) => /\b(?:grand\s*)?total\b|jumlah|tagihan|amount\s*due/i.test(line));
-  const totalAmount = num(totalLine?.match(/(?:rp\.?\s*)?([\d.,]{4,})/i)?.[1]);
-  const candidates = lines.flatMap((line) => {
-    const matches = [...line.matchAll(/(?:rp\.?\s*)?([\d.,]{4,})/gi)];
-    return matches.map((match) => num(match[1])).filter((value) => value > 0);
-  });
-  const amount = totalAmount || Math.max(0, ...candidates);
+  const totalAmount = totalLine ? (num(totalLine.match(/rp\.?\s*([\d.,]{4,})/i)?.[1]) || num(totalLine.match(/([\d.,]{4,})/)?.[1]) || null) : null;
+  // Priority 2: last line from the bottom that has an explicit Rp prefix before a number
+  let lastRpAmount = null;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(/rp\.?\s*([\d.,]{4,})/i);
+    if (m) { const v = num(m[1]); if (v > 0) { lastRpAmount = v; break; } }
+  }
+  const amount = totalAmount || lastRpAmount || 0;
   const vendor = lines[0] || "Receipt";
   return {
     id: id("ocr-exp"),
