@@ -513,9 +513,14 @@ async function saveExpense(tripId, expense) {
   return expense;
 }
 
+// Telegram drafts live here until confirmed — never appear in the expenses list
+async function saveDraft(tripId, draft) {
+  await tripRef(tripId).collection("drafts").doc(draft.id).set(draft, { merge: true });
+  return draft;
+}
+
 async function findLatestDraftExpense(tripId, member) {
-  let query = tripRef(tripId).collection("expenses")
-    .where("status", "==", "draft");
+  let query = tripRef(tripId).collection("drafts");
   if (member?.telegramUserId) {
     query = query.where("createdByTelegramUserId", "==", member.telegramUserId);
   }
@@ -535,10 +540,10 @@ async function confirmExpense(tripId, expenseId, member) {
     };
   }
 
-  const draft = requestedId
+  const pendingDraft = requestedId
     ? null
     : await findLatestDraftExpense(tripId, member);
-  const idToConfirm = requestedId || draft?.id;
+  const idToConfirm = requestedId || pendingDraft?.id;
   if (!idToConfirm) {
     return {
       ok: false,
@@ -546,6 +551,36 @@ async function confirmExpense(tripId, expenseId, member) {
     };
   }
 
+  // Check drafts collection first (telegram drafts held here until confirm)
+  const draftRef = tripRef(tripId).collection("drafts").doc(idToConfirm);
+  const draftSnap = await draftRef.get();
+  if (draftSnap.exists) {
+    const expense = {
+      ...draftSnap.data(),
+      status: "confirmed",
+      confirmedAt: nowField(),
+      confirmedByTelegramUserId: member?.telegramUserId || "",
+      updatedAt: nowField()
+    };
+    await saveExpense(tripId, expense);
+    await draftRef.delete();
+    if (expense.receiptId) {
+      await tripRef(tripId).collection("receipts").doc(expense.receiptId).set({
+        status: "confirmed",
+        confirmedExpenseId: idToConfirm,
+        updatedAt: nowField()
+      }, { merge: true });
+    }
+    return {
+      ok: true,
+      message: [
+        `Confirmed <code>${idToConfirm}</code>.`,
+        `${expense.vendor || expense.description || "Expense"}: <b>${rupiah(expenseTotal(expense))}</b>`
+      ].join("\n")
+    };
+  }
+
+  // Fallback: legacy drafts already in expenses collection
   const ref = tripRef(tripId).collection("expenses").doc(idToConfirm);
   const snap = await ref.get();
   if (!snap.exists) {
@@ -605,11 +640,10 @@ function paymentUpdate(value) {
 }
 
 async function updateDraft(tripId, expenseId, patch) {
-  const ref = tripRef(tripId).collection("expenses").doc(expenseId);
+  const ref = tripRef(tripId).collection("drafts").doc(expenseId);
   const snap = await ref.get();
   if (!snap.exists) return null;
   const data = snap.data();
-  if (data.status === "confirmed") return { id: snap.id, ...data, alreadyConfirmed: true };
   const merged = { ...data, ...patch };
   const shouldRecalculate = [
     "foodTJAmount",
@@ -816,7 +850,7 @@ async function startExpense(tripId, user, member, chatId, initialData) {
     createdByMember: member?.member || "",
     createdAt: nowField(), updatedAt: nowField()
   };
-  await saveExpense(tripId, draft);
+  await saveDraft(tripId, draft);
   const msgId = await sendTelegramCapture(chatId, sessionText(draft),
     { reply_markup: sessionKeyboard(draft) });
   await setSession(tripId, user, draft.id, msgId, chatId);
@@ -1023,7 +1057,7 @@ async function handlePhoto(tripId, message, member, user, chatId) {
     createdAt: nowField(),
     updatedAt: nowField()
   });
-  await saveExpense(tripId, draft);
+  await saveDraft(tripId, draft);
   if (chatId && user?.id) {
     const msgId = await sendTelegramCapture(chatId, sessionText(draft),
       { reply_markup: sessionKeyboard(draft) });
