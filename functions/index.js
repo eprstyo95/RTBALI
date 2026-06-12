@@ -1430,7 +1430,7 @@ async function handleCallback(tripId, callbackQuery) {
       await answerCallbackQuery(callbackQuery.id, "Invalid action");
       return;
     }
-    const docRef = tripRef(tripId).collection("expenses").doc(expenseId);
+    const docRef = tripRef(tripId).collection("drafts").doc(expenseId);
     const snap = await docRef.get();
     if (!snap.exists) { await answerCallbackQuery(callbackQuery.id, "Draft not found"); return; }
     const draft = { id: snap.id, ...snap.data() };
