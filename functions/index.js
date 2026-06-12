@@ -332,18 +332,26 @@ function parseOcrLineItems(ocrText) {
   const totalRe = /\bgrand\s*total\b|\btotal\b|\bjumlah\b|\btagihan\b|\bamount\s*due\b/i;
   const subtotalRe = /\bsub\s*total\b|\bsubtotal\b/i;
   const skipRe = /^(sales\s*no|date|table|purpose|cashier|\d+\s*items?|qris|cash(?:ier)?|matur|ojok|depot|heritage|bukan|dine|take|[a-z]{2,4}\d{8,})/i;
+
+  // State for multi-line receipts where qty/name/amount are on separate lines
+  let pendingName = null;
+  let pendingQty = 1;
+  let justSawQty = false;
+
+  const flushPending = () => { pendingName = null; pendingQty = 1; justSawQty = false; };
+
   for (const line of lines) {
     if (subtotalRe.test(line)) {
       const m = line.match(/([\d.,]{4,})/); if (m) subtotal = num(m[1]);
-      continue;
+      flushPending(); continue;
     }
     if (/grand\s*total/i.test(line)) {
       const m = line.match(/([\d.,]{4,})/); if (m) total = num(m[1]);
-      continue;
+      flushPending(); continue;
     }
     if (totalRe.test(line) && !subtotalRe.test(line)) {
       const m = line.match(/([\d.,]{4,})/); if (m) total = Math.max(total, num(m[1]));
-      continue;
+      flushPending(); continue;
     }
     if (taxRe.test(line)) {
       const m = line.match(/([\d.,]{4,})/);
@@ -351,23 +359,62 @@ function parseOcrLineItems(ocrText) {
         taxAmount += num(m[1]);
         if (!taxLabel) taxLabel = line.replace(/[\d.,:\s]+$/, "").trim().toUpperCase();
       }
+      flushPending(); continue;
+    }
+    if (skipRe.test(line)) { flushPending(); continue; }
+    if (/\d{2}[-/]\d{2}[-/]\d{4}/.test(line)) { flushPending(); continue; }
+
+    // Case 1: full item line — "1 ITEM NAME 36.000" or "ITEM NAME 36.000"
+    const fullM = line.match(/^(.*?)\s+([\d.,]{4,})\s*$/);
+    if (fullM) {
+      const amount = num(fullM[2]);
+      if (amount >= 100) {
+        const rest = fullM[1].trim();
+        const qtyM = rest.match(/^(\d{1,2})\s+(.+)$/);
+        let qty = 1, name = rest;
+        if (qtyM) { qty = parseInt(qtyM[1]); name = qtyM[2].trim(); }
+        if (name.length >= 2 && !/^[\d\s]+$/.test(name)) {
+          items.push({ idx: items.length, name, qty, amount, assign: "Both" });
+          flushPending(); continue;
+        }
+      }
+    }
+
+    // Case 2: amount-only line — pairs with pending name from previous line(s)
+    const amountOnlyM = line.match(/^([\d.,]{4,})\s*$/);
+    if (amountOnlyM) {
+      const amount = num(amountOnlyM[1]);
+      if (amount >= 100 && pendingName) {
+        items.push({ idx: items.length, name: pendingName, qty: pendingQty, amount, assign: "Both" });
+        flushPending(); continue;
+      }
+      // No pending name — skip this orphan amount
+      flushPending(); continue;
+    }
+
+    // Case 3: qty-only line — a single small integer like "1" or "2"
+    if (/^\d{1,2}$/.test(line.trim())) {
+      pendingQty = parseInt(line.trim());
+      justSawQty = true;
       continue;
     }
-    if (skipRe.test(line)) continue;
-    if (/\d{2}[-/]\d{2}[-/]\d{4}/.test(line)) continue;
-    // Item line: name (possibly with leading qty) then amount at end
-    const m = line.match(/^(.*?)\s+([\d.,]{4,})\s*$/);
-    if (!m) continue;
-    const amount = num(m[2]);
-    if (!amount || amount < 100) continue;
-    const rest = m[1].trim();
-    const qtyM = rest.match(/^(\d{1,2})\s+(.+)$/);
-    let qty = 1, name = rest;
-    if (qtyM) { qty = parseInt(qtyM[1]); name = qtyM[2].trim(); }
-    if (name.length < 2 || /^[\d\s]+$/.test(name)) continue;
-    items.push({ idx: items.length, name, qty, amount, assign: "Both" });
+
+    // Case 4: name-only line (no trailing amount) — store as pending
+    if (!/^\d+$/.test(line) && line.length >= 3) {
+      const qtyNameM = line.match(/^(\d{1,2})\s+(.+)$/);
+      if (qtyNameM && !/^\d+$/.test(qtyNameM[2])) {
+        pendingName = qtyNameM[2].trim();
+        pendingQty = parseInt(qtyNameM[1]);
+      } else {
+        pendingName = line.trim();
+        if (!justSawQty) pendingQty = 1;
+      }
+      justSawQty = false;
+    }
   }
+
   if (!total) total = (subtotal || 0) + (taxAmount || 0);
+  logger.info("parseOcrLineItems result", { itemCount: items.length, subtotal, taxAmount, total });
   return { items, subtotal, taxAmount, taxLabel: taxLabel || "PB1/Tax", total };
 }
 
