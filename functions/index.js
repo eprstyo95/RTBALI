@@ -320,6 +320,176 @@ function ocrDraftText(draft, ocr = null) {
   return `${summary.join("\n")}\n<blockquote expandable>${details.map(htmlEscape).join("\n")}</blockquote>`;
 }
 
+// ============================================================
+// ITEM-LEVEL BILL SPLIT (OCR receipts)
+// ============================================================
+
+function parseOcrLineItems(ocrText) {
+  const lines = clean(ocrText).split(/\n+/).map(clean).filter(Boolean);
+  const items = [];
+  let subtotal = 0, taxAmount = 0, taxLabel = "", total = 0;
+  const taxRe = /\b(pb\s*1|pb1|ppn|service\s*charge?|service\s*fee|pajak|tax(?:\s*(?:&|dan|and)\s*service)?)\b/i;
+  const totalRe = /\bgrand\s*total\b|\btotal\b|\bjumlah\b|\btagihan\b|\bamount\s*due\b/i;
+  const subtotalRe = /\bsub\s*total\b|\bsubtotal\b/i;
+  const skipRe = /^(sales\s*no|date|table|purpose|cashier|\d+\s*items?|qris|cash(?:ier)?|matur|ojok|depot|heritage|bukan|dine|take|[a-z]{2,4}\d{8,})/i;
+
+  // State for multi-line receipts where qty/name/amount are on separate lines
+  let pendingName = null;
+  let pendingQty = 1;
+  let justSawQty = false;
+
+  const flushPending = () => { pendingName = null; pendingQty = 1; justSawQty = false; };
+
+  for (const line of lines) {
+    if (subtotalRe.test(line)) {
+      const m = line.match(/([\d.,]{4,})/); if (m) subtotal = num(m[1]);
+      flushPending(); continue;
+    }
+    if (/grand\s*total/i.test(line)) {
+      const m = line.match(/([\d.,]{4,})/); if (m) total = num(m[1]);
+      flushPending(); continue;
+    }
+    if (totalRe.test(line) && !subtotalRe.test(line)) {
+      const m = line.match(/([\d.,]{4,})/); if (m) total = Math.max(total, num(m[1]));
+      flushPending(); continue;
+    }
+    if (taxRe.test(line)) {
+      const m = line.match(/([\d.,]{4,})/);
+      if (m) {
+        taxAmount += num(m[1]);
+        if (!taxLabel) taxLabel = line.replace(/[\d.,:\s]+$/, "").trim().toUpperCase();
+      }
+      flushPending(); continue;
+    }
+    if (skipRe.test(line)) { flushPending(); continue; }
+    if (/\d{2}[-/]\d{2}[-/]\d{4}/.test(line)) { flushPending(); continue; }
+
+    // Case 1: full item line — "1 ITEM NAME 36.000" or "ITEM NAME 36.000"
+    const fullM = line.match(/^(.*?)\s+([\d.,]{4,})\s*$/);
+    if (fullM) {
+      const amount = num(fullM[2]);
+      if (amount >= 100) {
+        const rest = fullM[1].trim();
+        const qtyM = rest.match(/^(\d{1,2})\s+(.+)$/);
+        let qty = 1, name = rest;
+        if (qtyM) { qty = parseInt(qtyM[1]); name = qtyM[2].trim(); }
+        if (name.length >= 2 && !/^[\d\s]+$/.test(name)) {
+          items.push({ idx: items.length, name, qty, amount, assign: "Both" });
+          flushPending(); continue;
+        }
+      }
+    }
+
+    // Case 2: amount-only line — pairs with pending name from previous line(s)
+    const amountOnlyM = line.match(/^([\d.,]{4,})\s*$/);
+    if (amountOnlyM) {
+      const amount = num(amountOnlyM[1]);
+      if (amount >= 100 && pendingName) {
+        items.push({ idx: items.length, name: pendingName, qty: pendingQty, amount, assign: "Both" });
+        flushPending(); continue;
+      }
+      // No pending name — skip this orphan amount
+      flushPending(); continue;
+    }
+
+    // Case 3: qty-only line — a single small integer like "1" or "2"
+    if (/^\d{1,2}$/.test(line.trim())) {
+      pendingQty = parseInt(line.trim());
+      justSawQty = true;
+      continue;
+    }
+
+    // Case 4: name-only line (no trailing amount) — store as pending
+    if (!/^\d+$/.test(line) && line.length >= 3) {
+      const qtyNameM = line.match(/^(\d{1,2})\s+(.+)$/);
+      if (qtyNameM && !/^\d+$/.test(qtyNameM[2])) {
+        pendingName = qtyNameM[2].trim();
+        pendingQty = parseInt(qtyNameM[1]);
+      } else {
+        pendingName = line.trim();
+        if (!justSawQty) pendingQty = 1;
+      }
+      justSawQty = false;
+    }
+  }
+
+  if (!total) total = (subtotal || 0) + (taxAmount || 0);
+  logger.info("parseOcrLineItems result", { itemCount: items.length, subtotal, taxAmount, total });
+  return { items, subtotal, taxAmount, taxLabel: taxLabel || "PB1/Tax", total };
+}
+
+function calcFromBillItems(draft) {
+  const items = draft.billItems || [];
+  const tax = num(draft.billTax) || 0;
+  let tjFood = 0, ekFood = 0, sharedFood = 0;
+  for (const item of items) {
+    const a = num(item.amount);
+    if (item.assign === "TJ") tjFood += a;
+    else if (item.assign === "EK") ekFood += a;
+    else sharedFood += a;
+  }
+  return {
+    foodTJAmount: tjFood,
+    foodEKAmount: ekFood,
+    foodSharedAmount: sharedFood,
+    taxServiceAmount: tax,
+    billSplitMode: "Meal/order split",
+    split: "Custom",
+    billIncludesTaxService: "Yes"
+  };
+}
+
+function itemSplitText(draft) {
+  const items = draft.billItems || [];
+  const tax = num(draft.billTax) || 0;
+  const taxLabel = draft.billTaxLabel || "Tax";
+  const vendor = draft.vendor || draft.description || "Receipt";
+  const total = num(draft.amount) || 0;
+  const lines = [
+    `<b>📋 ${htmlEscape(vendor)}</b>  ${rupiah(total)}`,
+    "Tap buttons to assign each item to TJ, EK, or Both:"
+  ];
+  for (const item of items) {
+    const icon = item.assign === "TJ" ? "👤TJ" : item.assign === "EK" ? "👤EK" : "👥Both";
+    const qtyStr = item.qty > 1 ? ` ×${item.qty}` : "";
+    lines.push(`${item.idx + 1}. ${htmlEscape(item.name)}${qtyStr}  <b>${rupiah(item.amount)}</b>  → ${icon}`);
+  }
+  if (tax) lines.push(`\n${htmlEscape(taxLabel)}: ${rupiah(tax)} (split proportionally)`);
+  const foodCalc = calcFromBillItems(draft);
+  const s = shares({ ...draft, ...foodCalc });
+  lines.push(`\nTJ: <b>${rupiah(Math.round(s.TJ))}</b>   EK: <b>${rupiah(Math.round(s.EK))}</b>`);
+  lines.push(`Payer: <b>${htmlEscape(draft.payer || "TJ")}</b> · <b>${htmlEscape(draft.payment || "Cash")}</b>`);
+  return lines.join("\n");
+}
+
+function itemSplitKeyboard(draft) {
+  const items = draft.billItems || [];
+  const expId = draft.id;
+  const payer = draft.payer || "TJ";
+  const payment = draft.payment || "Cash";
+  const rows = items.map((item) => {
+    const isTJ = item.assign === "TJ";
+    const isEK = item.assign === "EK";
+    const isBoth = !isTJ && !isEK;
+    return [
+      { text: `${item.idx + 1} ${isTJ ? "✓" : ""}TJ`,   callback_data: `item:a:${expId}:${item.idx}:TJ`   },
+      { text: `${item.idx + 1} ${isEK ? "✓" : ""}EK`,   callback_data: `item:a:${expId}:${item.idx}:EK`   },
+      { text: `${item.idx + 1} ${isBoth ? "✓" : ""}Both`, callback_data: `item:a:${expId}:${item.idx}:Both` }
+    ];
+  });
+  rows.push([
+    { text: `${payer === "TJ" ? "✓" : ""}Paid TJ`, callback_data: `exp:p:${expId}:TJ` },
+    { text: `${payer === "EK" ? "✓" : ""}Paid EK`, callback_data: `exp:p:${expId}:EK` }
+  ]);
+  rows.push([
+    { text: `${payment === "Cash" ? "✓" : ""}Cash`, callback_data: `exp:m:${expId}:cash` },
+    { text: `${payment === "QRIS" ? "✓" : ""}QRIS`, callback_data: `exp:m:${expId}:qris` },
+    { text: `${payment === "Card" ? "✓" : ""}Card`, callback_data: `exp:m:${expId}:card` }
+  ]);
+  rows.push([{ text: "✅ Confirm & Save", callback_data: `exp:c:${expId}` }]);
+  return { inline_keyboard: rows };
+}
+
 function telegramResponse(text, extra = {}) {
   return { text, extra };
 }
@@ -992,17 +1162,25 @@ function ocrStatusText(ocr) {
 
 function parseOcrExpense(ocrText, member) {
   const lines = clean(ocrText).split(/\n+/).map(clean).filter(Boolean);
-  // Priority 1: last line with a total/jumlah/tagihan keyword
+  const { items, taxAmount, taxLabel, total: parsedTotal } = parseOcrLineItems(ocrText);
   const totalLine = [...lines].reverse().find((line) => /\b(?:grand\s*)?total\b|jumlah|tagihan|amount\s*due/i.test(line));
-  const totalAmount = totalLine ? (num(totalLine.match(/rp\.?\s*([\d.,]{4,})/i)?.[1]) || num(totalLine.match(/([\d.,]{4,})/)?.[1]) || null) : null;
-  // Priority 2: last line from the bottom that has an explicit Rp prefix before a number
-  let lastRpAmount = null;
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const m = lines[i].match(/rp\.?\s*([\d.,]{4,})/i);
-    if (m) { const v = num(m[1]); if (v > 0) { lastRpAmount = v; break; } }
-  }
-  const amount = totalAmount || lastRpAmount || 0;
+  const totalAmount = num(totalLine?.match(/(?:rp\.?\s*)?([\d.,]{4,})/i)?.[1]);
+  const candidates = lines.flatMap((line) => {
+    const matches = [...line.matchAll(/(?:rp\.?\s*)?([\d.,]{4,})/gi)];
+    return matches.map((match) => num(match[1])).filter((value) => value > 0);
+  });
+  const amount = totalAmount || parsedTotal || Math.max(0, ...candidates);
   const vendor = lines[0] || "Receipt";
+  const hasItems = items.length > 0;
+  const itemFields = hasItems ? {
+    billItems: items,
+    billTax: taxAmount,
+    billTaxLabel: taxLabel,
+    foodTJAmount: 0,
+    foodEKAmount: 0,
+    foodSharedAmount: items.reduce((sum, i) => sum + num(i.amount), 0),
+    taxServiceAmount: taxAmount
+  } : {};
   return {
     id: id("ocr-exp"),
     date: todayIso(),
@@ -1013,9 +1191,10 @@ function parseOcrExpense(ocrText, member) {
     payer: member?.member || "TJ",
     payment: "Cash",
     amount,
-    split: "Shared by Units",
-    billSplitMode: "Off",
+    split: hasItems ? "Custom" : "Shared by Units",
+    billSplitMode: hasItems ? "Meal/order split" : "Off",
     billIncludesTaxService: "Yes",
+    ...itemFields,
     notes: "OCR draft. Review before confirm.",
     source: "ocr",
     status: "draft",
@@ -1058,6 +1237,11 @@ async function handlePhoto(tripId, message, member, user, chatId) {
     updatedAt: nowField()
   });
   await saveDraft(tripId, draft);
+  const hasItems = (draft.billItems || []).length > 0;
+  if (hasItems && chatId) {
+    await sendTelegram(chatId, itemSplitText(draft), { reply_markup: itemSplitKeyboard(draft) });
+    return "";
+  }
   if (chatId && user?.id) {
     const msgId = await sendTelegramCapture(chatId, sessionText(draft),
       { reply_markup: sessionKeyboard(draft) });
@@ -1236,6 +1420,36 @@ async function handleCallback(tripId, callbackQuery) {
     return;
   }
 
+  if (data.startsWith("item:a:")) {
+    // item:a:{expenseId}:{itemIdx}:{who}
+    const parts = data.split(":");
+    const expenseId = parts[2];
+    const itemIdx = parseInt(parts[3]);
+    const who = parts[4]; // "TJ", "EK", "Both"
+    if (!expenseId || isNaN(itemIdx) || !["TJ", "EK", "Both"].includes(who)) {
+      await answerCallbackQuery(callbackQuery.id, "Invalid action");
+      return;
+    }
+    const docRef = tripRef(tripId).collection("expenses").doc(expenseId);
+    const snap = await docRef.get();
+    if (!snap.exists) { await answerCallbackQuery(callbackQuery.id, "Draft not found"); return; }
+    const draft = { id: snap.id, ...snap.data() };
+    if (draft.status !== "draft") { await answerCallbackQuery(callbackQuery.id, "Already confirmed"); return; }
+    const items = (draft.billItems || []).map((i) => ({ ...i }));
+    const item = items.find((i) => i.idx === itemIdx);
+    if (!item) { await answerCallbackQuery(callbackQuery.id, "Item not found"); return; }
+    item.assign = who;
+    const foodCalc = calcFromBillItems({ ...draft, billItems: items });
+    await docRef.update({ billItems: items, ...foodCalc, updatedAt: nowField() });
+    const updatedDraft = { ...draft, billItems: items, ...foodCalc };
+    await answerCallbackQuery(callbackQuery.id, `${item.name} → ${who}`);
+    const text = itemSplitText(updatedDraft);
+    const keyboard = itemSplitKeyboard(updatedDraft);
+    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: keyboard });
+    if (!editResponse?.ok) await sendTelegram(chatId, text, { reply_markup: keyboard });
+    return;
+  }
+
   if (data.startsWith("exp:")) {
     const [, action, expenseId, value] = data.split(":");
     if (!expenseId) return;
@@ -1281,10 +1495,12 @@ async function handleCallback(tripId, callbackQuery) {
         ? `Split set to ${draft.split}.`
         : `Payment set to ${draft.payment}.`;
     await answerCallbackQuery(callbackQuery.id, label);
-    const text = ocrDraftText(draft);
-    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: ocrDraftKeyboard(expenseId) });
+    const hasItems = (draft.billItems || []).length > 0;
+    const text = hasItems ? itemSplitText(draft) : ocrDraftText(draft);
+    const keyboard = hasItems ? itemSplitKeyboard(draft) : ocrDraftKeyboard(expenseId);
+    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: keyboard });
     if (!editResponse?.ok) {
-      await sendTelegram(chatId, `${label}\n\n${text}`, { reply_markup: ocrDraftKeyboard(expenseId) });
+      await sendTelegram(chatId, `${label}\n\n${text}`, { reply_markup: keyboard });
     }
     return;
   }
