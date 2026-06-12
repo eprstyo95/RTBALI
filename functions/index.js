@@ -989,6 +989,78 @@ async function clearSession(tripId, user) {
   await pendingRef(tripId, user).delete();
 }
 
+// ── item split wizard — asks one item at a time via reply keyboard ────────────
+async function setItemSplitState(tripId, user, draftId, itemIdx, chatId) {
+  await pendingRef(tripId, user).set({
+    type: "itemSplit", draftId, itemIdx,
+    chatId: String(chatId), updatedAt: nowField()
+  }, { merge: false });
+}
+
+function itemWhoKeyboard() {
+  return {
+    keyboard: [[{ text: "TJ" }, { text: "EK" }]],
+    resize_keyboard: true, one_time_keyboard: true
+  };
+}
+
+async function startItemSplitWizard(tripId, user, draft, chatId) {
+  const items = draft.billItems || [];
+  if (!items.length) return;
+  await setItemSplitState(tripId, user, draft.id, 0, chatId);
+  const item = items[0];
+  await sendTelegram(chatId,
+    `<b>Item 1/${items.length}:</b>\n${htmlEscape(item.name)} – ${rupiah(num(item.amount))}\n\nWho had this?`,
+    { reply_markup: itemWhoKeyboard() });
+}
+
+async function consumeItemSplitAnswer(tripId, user, chatId, text) {
+  const snap = await pendingRef(tripId, user).get();
+  if (!snap.exists) return null;
+  const state = snap.data();
+  if (state.type !== "itemSplit") return null;
+
+  const draftRef = tripRef(tripId).collection("drafts").doc(state.draftId);
+  const draftSnap = await draftRef.get();
+  if (!draftSnap.exists) {
+    await pendingRef(tripId, user).delete();
+    await sendTelegram(chatId, "Draft expired. Send the receipt again.", { reply_markup: menuKeyboard() });
+    return "";
+  }
+
+  const who = text.trim().toUpperCase();
+  const draft = { id: draftSnap.id, ...draftSnap.data() };
+  const items = (draft.billItems || []).map((i) => ({ ...i }));
+
+  if (!["TJ", "EK"].includes(who)) {
+    const item = items[state.itemIdx];
+    await sendTelegram(chatId,
+      `Reply TJ or EK.\n\n<b>Item ${state.itemIdx + 1}/${items.length}:</b>\n${htmlEscape(item.name)} – ${rupiah(num(item.amount))}\n\nWho had this?`,
+      { reply_markup: itemWhoKeyboard() });
+    return "";
+  }
+
+  const current = items[state.itemIdx];
+  if (current) current.assign = who;
+  const nextIdx = state.itemIdx + 1;
+  const foodCalc = calcFromBillItems({ ...draft, billItems: items });
+  await draftRef.update({ billItems: items, ...foodCalc, updatedAt: nowField() });
+
+  if (nextIdx < items.length) {
+    await setItemSplitState(tripId, user, state.draftId, nextIdx, chatId);
+    const next = items[nextIdx];
+    await sendTelegram(chatId,
+      `<b>Item ${nextIdx + 1}/${items.length}:</b>\n${htmlEscape(next.name)} – ${rupiah(num(next.amount))}\n\nWho had this?`,
+      { reply_markup: itemWhoKeyboard() });
+  } else {
+    await pendingRef(tripId, user).delete();
+    const updatedDraft = { ...draft, billItems: items, ...foodCalc };
+    const msgId = await sendTelegramCapture(chatId, sessionText(updatedDraft), { reply_markup: sessionKeyboard(updatedDraft) });
+    await setSession(tripId, user, updatedDraft.id, msgId, chatId);
+  }
+  return "";
+}
+
 // Edit the one draft message in-place (no new message).
 // reply_markup is intentionally omitted — editMessageText only accepts InlineKeyboardMarkup,
 // not ReplyKeyboardMarkup. The reply keyboard persists in the chat automatically.
@@ -1031,6 +1103,8 @@ async function startExpense(tripId, user, member, chatId, initialData) {
 
 async function consumePendingAmount(tripId, user, chatId, text, member) {
   if (!user?.id || text.startsWith("/")) return null;
+  const itemSplitResult = await consumeItemSplitAnswer(tripId, user, chatId, text);
+  if (itemSplitResult !== null) return itemSplitResult;
   const ref = pendingRef(tripId, user);
   const snap = await ref.get();
   if (!snap.exists) return null;
@@ -1238,8 +1312,8 @@ async function handlePhoto(tripId, message, member, user, chatId) {
   });
   await saveDraft(tripId, draft);
   const hasItems = (draft.billItems || []).length > 0;
-  if (hasItems && chatId) {
-    await sendTelegram(chatId, itemSplitText(draft), { reply_markup: itemSplitKeyboard(draft) });
+  if (hasItems && chatId && user?.id) {
+    await startItemSplitWizard(tripId, user, draft, chatId);
     return "";
   }
   if (chatId && user?.id) {
@@ -1417,36 +1491,6 @@ async function handleCallback(tripId, callbackQuery) {
   if (!chatId) return;
   if (ALLOWED_CHAT_ID && String(chatId) !== String(ALLOWED_CHAT_ID)) {
     await answerCallbackQuery(callbackQuery.id, "This bot is locked to a different group.");
-    return;
-  }
-
-  if (data.startsWith("item:a:")) {
-    // item:a:{expenseId}:{itemIdx}:{who}
-    const parts = data.split(":");
-    const expenseId = parts[2];
-    const itemIdx = parseInt(parts[3]);
-    const who = parts[4]; // "TJ", "EK", "Both"
-    if (!expenseId || isNaN(itemIdx) || !["TJ", "EK", "Both"].includes(who)) {
-      await answerCallbackQuery(callbackQuery.id, "Invalid action");
-      return;
-    }
-    const docRef = tripRef(tripId).collection("drafts").doc(expenseId);
-    const snap = await docRef.get();
-    if (!snap.exists) { await answerCallbackQuery(callbackQuery.id, "Draft not found"); return; }
-    const draft = { id: snap.id, ...snap.data() };
-    if (draft.status !== "draft") { await answerCallbackQuery(callbackQuery.id, "Already confirmed"); return; }
-    const items = (draft.billItems || []).map((i) => ({ ...i }));
-    const item = items.find((i) => i.idx === itemIdx);
-    if (!item) { await answerCallbackQuery(callbackQuery.id, "Item not found"); return; }
-    item.assign = who;
-    const foodCalc = calcFromBillItems({ ...draft, billItems: items });
-    await docRef.update({ billItems: items, ...foodCalc, updatedAt: nowField() });
-    const updatedDraft = { ...draft, billItems: items, ...foodCalc };
-    await answerCallbackQuery(callbackQuery.id, `${item.name} → ${who}`);
-    const text = itemSplitText(updatedDraft);
-    const keyboard = itemSplitKeyboard(updatedDraft);
-    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: keyboard });
-    if (!editResponse?.ok) await sendTelegram(chatId, text, { reply_markup: keyboard });
     return;
   }
 
