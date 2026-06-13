@@ -20,6 +20,24 @@ const ALLOWED_CHAT_ID = process.env.RTBALI_ALLOWED_CHAT_ID || "";
 const ACCOUNT_MEMBERS = ["TJ", "EK"];
 const DEFAULT_SPLIT_UNITS = { TJ: 2.5, EK: 2.5 };
 
+// Telegram per-user state machine types (telegramStates/{userId}.type).
+// Centralised so a typo can't silently break the pending/session flow.
+const STATE = Object.freeze({
+  SESSION: "session",
+  MEAL_AMOUNT: "mealAmount",
+  ITEM_SPLIT: "itemSplit"
+});
+
+// Bill-item assignment values. BOTH means "split proportionally" (shared).
+const ASSIGN = Object.freeze({ TJ: "TJ", EK: "EK", BOTH: "Both" });
+
+// Comma-separated origins allowed to call the web API; "*" (default) allows any.
+const ALLOWED_ORIGINS = (process.env.RTBALI_ALLOWED_ORIGINS || "*")
+  .split(",").map((o) => o.trim()).filter(Boolean);
+
+// Minimum gap between OCR/photo requests per chat, to cap Google Vision spend.
+const OCR_MIN_INTERVAL_MS = Number(process.env.RTBALI_OCR_MIN_INTERVAL_MS || 3000);
+
 const CATEGORY_ALIASES = {
   meal: "Food & Drinks",
   food: "Food & Drinks",
@@ -48,6 +66,45 @@ function nowField() {
 
 function id(prefix) {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+// Fully scan a collection/query in document-id pages so nothing is silently
+// truncated by a .limit() once the dataset grows past a single page.
+async function fetchAllDocs(query, pageSize = 500) {
+  const out = [];
+  let last = null;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    let q = query.orderBy(admin.firestore.FieldPath.documentId()).limit(pageSize);
+    if (last) q = q.startAfter(last);
+    const snap = await q.get();
+    if (snap.empty) break;
+    out.push(...snap.docs);
+    if (snap.size < pageSize) break;
+    last = snap.docs[snap.docs.length - 1].id;
+  }
+  return out;
+}
+
+// Best-effort per-chat throttle backed by Firestore. Returns false when the caller
+// should reject the request (too soon since the last allowed one). Guards paid
+// Google Vision OCR calls against accidental/abusive bursts.
+async function allowOcr(tripId, chatId) {
+  if (!chatId || OCR_MIN_INTERVAL_MS <= 0) return true;
+  const ref = tripRef(tripId).collection("rateLimits").doc(`ocr-${String(chatId)}`);
+  try {
+    return await db.runTransaction(async (tx) => {
+      const snap = await tx.get(ref);
+      const now = Date.now();
+      const last = snap.exists ? Number(snap.data()?.lastMs || 0) : 0;
+      if (now - last < OCR_MIN_INTERVAL_MS) return false;
+      tx.set(ref, { lastMs: now, updatedAt: nowField() }, { merge: true });
+      return true;
+    });
+  } catch (error) {
+    logger.warn("allowOcr transaction failed; allowing", error);
+    return true; // never block legitimate use on a rate-limiter error
+  }
 }
 
 function rupiah(value) {
@@ -374,7 +431,7 @@ function parseOcrLineItems(ocrText) {
         let qty = 1, name = rest;
         if (qtyM) { qty = parseInt(qtyM[1]); name = qtyM[2].trim(); }
         if (name.length >= 2 && !/^[\d\s]+$/.test(name)) {
-          items.push({ idx: items.length, name, qty, amount, assign: "Both" });
+          items.push({ idx: items.length, name, qty, amount, assign: ASSIGN.BOTH });
           flushPending(); continue;
         }
       }
@@ -385,7 +442,7 @@ function parseOcrLineItems(ocrText) {
     if (amountOnlyM) {
       const amount = num(amountOnlyM[1]);
       if (amount >= 100 && pendingName) {
-        items.push({ idx: items.length, name: pendingName, qty: pendingQty, amount, assign: "Both" });
+        items.push({ idx: items.length, name: pendingName, qty: pendingQty, amount, assign: ASSIGN.BOTH });
         flushPending(); continue;
       }
       // No pending name — skip this orphan amount
@@ -414,8 +471,14 @@ function parseOcrLineItems(ocrText) {
   }
 
   if (!total) total = (subtotal || 0) + (taxAmount || 0);
-  logger.info("parseOcrLineItems result", { itemCount: items.length, subtotal, taxAmount, total });
-  return { items, subtotal, taxAmount, taxLabel: taxLabel || "PB1/Tax", total };
+  const itemsSum = items.reduce((sum, i) => sum + num(i.amount), 0);
+  // Reconcile parsed line items against the receipt total. OCR commonly drops or
+  // mis-reads a digit; a >2% (and >Rp1000) gap means the item list is suspect.
+  const expected = total || ((subtotal || itemsSum) + (taxAmount || 0));
+  const diff = Math.abs((itemsSum + (taxAmount || 0)) - expected);
+  const reconciled = !expected || (diff <= Math.max(1000, expected * 0.02));
+  logger.info("parseOcrLineItems result", { itemCount: items.length, subtotal, taxAmount, total, itemsSum, reconciled });
+  return { items, subtotal, taxAmount, taxLabel: taxLabel || "PB1/Tax", total, itemsSum, reconciled, reconcileDiff: diff };
 }
 
 function calcFromBillItems(draft) {
@@ -424,8 +487,8 @@ function calcFromBillItems(draft) {
   let tjFood = 0, ekFood = 0, sharedFood = 0;
   for (const item of items) {
     const a = num(item.amount);
-    if (item.assign === "TJ") tjFood += a;
-    else if (item.assign === "EK") ekFood += a;
+    if (item.assign === ASSIGN.TJ) tjFood += a;
+    else if (item.assign === ASSIGN.EK) ekFood += a;
     else sharedFood += a;
   }
   return {
@@ -639,9 +702,9 @@ function shares(expense, units = splitUnits()) {
 }
 
 async function settlement(tripId) {
-  const [tripSnap, expenseSnap] = await Promise.all([
+  const [tripSnap, expenseDocs] = await Promise.all([
     tripRef(tripId).get(),
-    tripRef(tripId).collection("expenses").where("status", "==", "confirmed").get(),
+    fetchAllDocs(tripRef(tripId).collection("expenses").where("status", "==", "confirmed")),
   ]);
   const units = splitUnits(tripSnap.data()?.db?.settings || {});
   const members = memberLabels();
@@ -652,7 +715,7 @@ async function settlement(tripId) {
     paid[name] = 0;
     owes[name] = 0;
   }
-  expenseSnap.forEach((doc) => {
+  expenseDocs.forEach((doc) => {
     const exp = doc.data();
     const amount = expenseTotal(exp);
     total += amount;
@@ -892,7 +955,7 @@ async function setPendingAmount(tripId, user, field, expenseId) {
   // Without this, getSession returns null (type !== "session") and refreshSessionMsg silently stops working.
   const sess = await getSession(tripId, user);
   await pendingRef(tripId, user).set({
-    type: "mealAmount",
+    type: STATE.MEAL_AMOUNT,
     field,
     expenseId,
     draftMsgId: sess?.draftMsgId || null,
@@ -973,12 +1036,12 @@ async function getSession(tripId, user) {
   const snap = await pendingRef(tripId, user).get();
   if (!snap.exists) return null;
   const d = snap.data();
-  return (d.type === "session") ? d : null;
+  return (d.type === STATE.SESSION) ? d : null;
 }
 
 async function setSession(tripId, user, expenseId, draftMsgId, chatId) {
   await pendingRef(tripId, user).set({
-    type: "session", expenseId,
+    type: STATE.SESSION, expenseId,
     draftMsgId: draftMsgId || null,
     chatId: String(chatId || ""),
     updatedAt: nowField()
@@ -990,35 +1053,68 @@ async function clearSession(tripId, user) {
 }
 
 // ── item split wizard — asks one item at a time via reply keyboard ────────────
-async function setItemSplitState(tripId, user, draftId, itemIdx, chatId) {
+async function setItemSplitState(tripId, user, draftId, itemIdx, chatId, extra = {}) {
   await pendingRef(tripId, user).set({
-    type: "itemSplit", draftId, itemIdx,
-    chatId: String(chatId), updatedAt: nowField()
+    type: STATE.ITEM_SPLIT, draftId, itemIdx,
+    chatId: String(chatId),
+    history: extra.history || [],   // revert log for /UNDO
+    updatedAt: nowField()
   }, { merge: false });
 }
 
 function itemWhoKeyboard() {
   return {
-    keyboard: [[{ text: "TJ" }, { text: "EK" }]],
+    keyboard: [
+      [{ text: "/TJ" }, { text: "/EK" }],
+      [{ text: "/BOTH" }, { text: "/INVALID" }],
+      [{ text: "/UNDO" }, { text: "/ALLSHARED" }]
+    ],
     resize_keyboard: true, one_time_keyboard: true
   };
+}
+
+const ITEM_PROMPT_HINT = "(/TJ, /EK, /BOTH, /INVALID to skip, /UNDO, /ALLSHARED for rest)";
+
+function itemPromptText(items, idx, prefix = "") {
+  const item = items[idx];
+  return `${prefix}<b>Item ${idx + 1}/${items.length}:</b>\n${htmlEscape(item.name)} – ${rupiah(num(item.amount))}\n\nWho had this? ${ITEM_PROMPT_HINT}`;
 }
 
 async function startItemSplitWizard(tripId, user, draft, chatId) {
   const items = draft.billItems || [];
   if (!items.length) return;
   await setItemSplitState(tripId, user, draft.id, 0, chatId);
-  const item = items[0];
-  await sendTelegram(chatId,
-    `<b>Item 1/${items.length}:</b>\n${htmlEscape(item.name)} – ${rupiah(num(item.amount))}\n\nWho had this?`,
-    { reply_markup: itemWhoKeyboard() });
+  let warn = "";
+  const rec = draft.billReconcile;
+  if (rec && rec.ok === false) {
+    warn = `⚠️ Items add up to <b>${rupiah(num(rec.itemsSum) + num(draft.billTax))}</b> but the receipt total is <b>${rupiah(num(rec.total))}</b>. OCR may have misread an item — use /INVALID to drop wrong ones.\n\n`;
+  }
+  await sendTelegram(chatId, itemPromptText(items, 0, warn), { reply_markup: itemWhoKeyboard() });
+}
+
+// Persist the working item list and ask about items[idx].
+async function askItemSplit(tripId, user, chatId, draftRef, draft, items, idx, history) {
+  const foodCalc = calcFromBillItems({ ...draft, billItems: items });
+  await draftRef.update({ billItems: items, ...foodCalc, updatedAt: nowField() });
+  await setItemSplitState(tripId, user, draft.id, idx, chatId, { history });
+  await sendTelegram(chatId, itemPromptText(items, idx), { reply_markup: itemWhoKeyboard() });
+}
+
+// Commit the finished split and hand back to the normal draft session.
+async function finalizeItemSplit(tripId, user, chatId, draftRef, draft, items) {
+  const foodCalc = calcFromBillItems({ ...draft, billItems: items });
+  await draftRef.update({ billItems: items, ...foodCalc, updatedAt: nowField() });
+  await pendingRef(tripId, user).delete();
+  const updatedDraft = { ...draft, billItems: items, ...foodCalc };
+  const msgId = await sendTelegramCapture(chatId, sessionText(updatedDraft), { reply_markup: sessionKeyboard(updatedDraft) });
+  await setSession(tripId, user, updatedDraft.id, msgId, chatId);
 }
 
 async function consumeItemSplitAnswer(tripId, user, chatId, text) {
   const snap = await pendingRef(tripId, user).get();
   if (!snap.exists) return null;
   const state = snap.data();
-  if (state.type !== "itemSplit") return null;
+  if (state.type !== STATE.ITEM_SPLIT) return null;
 
   const draftRef = tripRef(tripId).collection("drafts").doc(state.draftId);
   const draftSnap = await draftRef.get();
@@ -1028,35 +1124,68 @@ async function consumeItemSplitAnswer(tripId, user, chatId, text) {
     return "";
   }
 
-  const who = text.trim().toUpperCase();
+  const who = text.trim().replace(/^\//, "").toUpperCase();
   const draft = { id: draftSnap.id, ...draftSnap.data() };
   const items = (draft.billItems || []).map((i) => ({ ...i }));
+  const history = Array.isArray(state.history) ? state.history.slice() : [];
+  const curIdx = Math.min(state.itemIdx, Math.max(0, items.length - 1));
 
-  if (!["TJ", "EK"].includes(who)) {
-    const item = items[state.itemIdx];
-    await sendTelegram(chatId,
-      `Reply TJ or EK.\n\n<b>Item ${state.itemIdx + 1}/${items.length}:</b>\n${htmlEscape(item.name)} – ${rupiah(num(item.amount))}\n\nWho had this?`,
-      { reply_markup: itemWhoKeyboard() });
+  if (!["TJ", "EK", "BOTH", "INVALID", "UNDO", "ALLSHARED"].includes(who)) {
+    await sendTelegram(chatId, itemPromptText(items, curIdx, "Use the buttons.\n\n"), { reply_markup: itemWhoKeyboard() });
     return "";
   }
 
-  const current = items[state.itemIdx];
-  if (current) current.assign = who;
-  const nextIdx = state.itemIdx + 1;
-  const foodCalc = calcFromBillItems({ ...draft, billItems: items });
-  await draftRef.update({ billItems: items, ...foodCalc, updatedAt: nowField() });
+  // /UNDO — revert the last assign or /INVALID removal and re-ask that item.
+  if (who === "UNDO") {
+    if (!history.length) {
+      await sendTelegram(chatId, itemPromptText(items, curIdx, "Nothing to undo.\n\n"), { reply_markup: itemWhoKeyboard() });
+      return "";
+    }
+    const last = history.pop();
+    let idx;
+    if (last.kind === "remove") {
+      const at = Math.min(last.atIdx, items.length);
+      items.splice(at, 0, last.item);
+      idx = at;
+    } else {
+      idx = last.idx;
+      if (items[idx]) {
+        if (last.prevAssign == null) delete items[idx].assign;
+        else items[idx].assign = last.prevAssign;
+      }
+    }
+    await askItemSplit(tripId, user, chatId, draftRef, draft, items, idx, history);
+    return "";
+  }
+
+  // /ALLSHARED — assign every remaining item to Both and finish.
+  if (who === "ALLSHARED") {
+    for (let i = curIdx; i < items.length; i++) items[i].assign = ASSIGN.BOTH;
+    await finalizeItemSplit(tripId, user, chatId, draftRef, draft, items);
+    return "";
+  }
+
+  let nextIdx;
+  if (who === "INVALID") {
+    const removedItem = items[curIdx];
+    if (removedItem) {
+      items.splice(curIdx, 1);
+      history.push({ kind: "remove", atIdx: curIdx, item: removedItem });
+    }
+    nextIdx = curIdx; // the next item shifts into this slot
+  } else {
+    const current = items[curIdx];
+    if (current) {
+      history.push({ kind: "assign", idx: curIdx, prevAssign: current.assign ?? null });
+      current.assign = who === "BOTH" ? ASSIGN.BOTH : who;
+    }
+    nextIdx = curIdx + 1;
+  }
 
   if (nextIdx < items.length) {
-    await setItemSplitState(tripId, user, state.draftId, nextIdx, chatId);
-    const next = items[nextIdx];
-    await sendTelegram(chatId,
-      `<b>Item ${nextIdx + 1}/${items.length}:</b>\n${htmlEscape(next.name)} – ${rupiah(num(next.amount))}\n\nWho had this?`,
-      { reply_markup: itemWhoKeyboard() });
+    await askItemSplit(tripId, user, chatId, draftRef, draft, items, nextIdx, history);
   } else {
-    await pendingRef(tripId, user).delete();
-    const updatedDraft = { ...draft, billItems: items, ...foodCalc };
-    const msgId = await sendTelegramCapture(chatId, sessionText(updatedDraft), { reply_markup: sessionKeyboard(updatedDraft) });
-    await setSession(tripId, user, updatedDraft.id, msgId, chatId);
+    await finalizeItemSplit(tripId, user, chatId, draftRef, draft, items);
   }
   return "";
 }
@@ -1102,14 +1231,16 @@ async function startExpense(tripId, user, member, chatId, initialData) {
 // ── command handlers (all edit the session message instead of sending new) ───
 
 async function consumePendingAmount(tripId, user, chatId, text, member) {
-  if (!user?.id || text.startsWith("/")) return null;
+  if (!user?.id) return null;
+  // Check itemSplit before slash guard so /TJ, /EK, /BOTH, /INVALID are intercepted by the wizard
   const itemSplitResult = await consumeItemSplitAnswer(tripId, user, chatId, text);
   if (itemSplitResult !== null) return itemSplitResult;
+  if (text.startsWith("/")) return null;
   const ref = pendingRef(tripId, user);
   const snap = await ref.get();
   if (!snap.exists) return null;
   const state = snap.data();
-  if (state.type !== "mealAmount") return null;
+  if (state.type !== STATE.MEAL_AMOUNT) return null;
   const amount = num(text);
   if (!amount) return telegramResponse("Type the amount as digits, e.g. <code>150000</code>.", {
     reply_markup: { force_reply: true, input_field_placeholder: "150000" }
@@ -1236,7 +1367,7 @@ function ocrStatusText(ocr) {
 
 function parseOcrExpense(ocrText, member) {
   const lines = clean(ocrText).split(/\n+/).map(clean).filter(Boolean);
-  const { items, taxAmount, taxLabel, total: parsedTotal } = parseOcrLineItems(ocrText);
+  const { items, taxAmount, taxLabel, total: parsedTotal, itemsSum, reconciled, reconcileDiff } = parseOcrLineItems(ocrText);
   const totalLine = [...lines].reverse().find((line) => /\b(?:grand\s*)?total\b|jumlah|tagihan|amount\s*due/i.test(line));
   const totalAmount = num(totalLine?.match(/(?:rp\.?\s*)?([\d.,]{4,})/i)?.[1]);
   const candidates = lines.flatMap((line) => {
@@ -1253,7 +1384,8 @@ function parseOcrExpense(ocrText, member) {
     foodTJAmount: 0,
     foodEKAmount: 0,
     foodSharedAmount: items.reduce((sum, i) => sum + num(i.amount), 0),
-    taxServiceAmount: taxAmount
+    taxServiceAmount: taxAmount,
+    billReconcile: { itemsSum, total: parsedTotal, ok: reconciled, diff: reconcileDiff }
   } : {};
   return {
     id: id("ocr-exp"),
@@ -1283,6 +1415,9 @@ async function handlePhoto(tripId, message, member, user, chatId) {
   const photos = message.photo || [];
   const largest = photos[photos.length - 1];
   if (!largest) return "No photo found.";
+  if (!(await allowOcr(tripId, chatId))) {
+    return "⏳ One receipt at a time — wait a moment before sending the next photo.";
+  }
   const file = await downloadTelegramFile(largest.file_id);
   const receiptId = id("receipt");
   const objectPath = `trips/${tripId}/receipts/${receiptId}.jpg`;
@@ -1606,18 +1741,54 @@ async function handleCallback(tripId, callbackQuery) {
   }
 }
 
-exports.telegramWebhook = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory: "512MiB" }, async (req, res) => {
+// Atomic idempotency lock: create() throws if the doc already exists, so only the
+// first delivery of a given update_id claims it. Telegram retries deliveries on
+// timeout/non-200, which would otherwise reprocess the same photo/command twice.
+// NOTE: configure a Firestore TTL policy on `processedUpdates.expireAt` to auto-purge.
+async function claimUpdate(tripId, updateId) {
+  if (updateId == null) return true;
+  const ref = tripRef(tripId).collection("processedUpdates").doc(String(updateId));
   try {
-    if (req.method !== "POST") return res.status(405).send("Method not allowed");
-    if (WEBHOOK_SECRET && req.get("x-telegram-bot-api-secret-token") !== WEBHOOK_SECRET) {
-      return res.status(401).send("Bad webhook secret");
-    }
-    const update = req.body || {};
+    const expireAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    await ref.create({ at: nowField(), expireAt });
+    return true;
+  } catch (_) {
+    return false; // already processed
+  }
+}
+
+exports.telegramWebhook = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory: "512MiB" }, async (req, res) => {
+  if (req.method !== "POST") return res.status(405).send("Method not allowed");
+  // Fail closed: refuse to run unauthenticated if the secret isn't configured.
+  if (!WEBHOOK_SECRET) {
+    logger.error("TELEGRAM_WEBHOOK_SECRET not configured — rejecting webhook");
+    return res.status(503).json({ ok: false, error: "webhook secret not configured" });
+  }
+  if (req.get("x-telegram-bot-api-secret-token") !== WEBHOOK_SECRET) {
+    return res.status(401).send("Bad webhook secret");
+  }
+
+  const update = req.body || {};
+
+  // Drop edited messages — re-running a past command on edit causes duplicates/surprises.
+  if (update.edited_message && !update.message && !update.callback_query) {
+    return res.json({ ok: true, ignored: "edited_message" });
+  }
+
+  // Idempotency: skip updates Telegram has already delivered.
+  if (!(await claimUpdate(TRIP_ID, update.update_id))) {
+    logger.info("Duplicate update skipped", { updateId: update.update_id });
+    return res.json({ ok: true, duplicate: true });
+  }
+
+  // Always ack with 200 after claiming — on internal error we log and notify the
+  // user best-effort, but never return non-200 (that triggers a Telegram retry storm).
+  try {
     if (update.callback_query) {
       await handleCallback(TRIP_ID, update.callback_query);
       return res.json({ ok: true });
     }
-    const message = update.message || update.edited_message;
+    const message = update.message;
     if (!message?.chat?.id) return res.json({ ok: true });
     const result = await handleCommand(TRIP_ID, message);
     if (typeof result === "string" && result) {
@@ -1628,12 +1799,23 @@ exports.telegramWebhook = onRequest({ region: "asia-southeast2", timeoutSeconds:
     return res.json({ ok: true });
   } catch (error) {
     logger.error(error);
-    return res.status(500).json({ ok: false, error: error.message });
+    const chatId = update.message?.chat?.id || update.callback_query?.message?.chat?.id;
+    if (chatId) {
+      try { await sendTelegram(chatId, "⚠️ Something went wrong handling that. Please try again."); } catch (_) {}
+    }
+    return res.json({ ok: true, handled: false });
   }
 });
 
 function cors(req, res) {
-  res.set("access-control-allow-origin", "*");
+  const origin = req.get("origin") || "";
+  const allowAny = ALLOWED_ORIGINS.includes("*");
+  if (allowAny) {
+    res.set("access-control-allow-origin", "*");
+  } else if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    res.set("access-control-allow-origin", origin);
+    res.set("vary", "Origin");
+  }
   res.set("access-control-allow-headers", "content-type,x-rtbali-sync-key");
   res.set("access-control-allow-methods", "GET,POST,DELETE,OPTIONS");
   if (req.method === "OPTIONS") {
@@ -1644,19 +1826,36 @@ function cors(req, res) {
 }
 
 function requireSync(req, res) {
-  if (!SYNC_KEY) return true;
+  // Fail closed: an unconfigured key would otherwise leave /import (which deletes
+  // expenses) and /export world-writable/readable.
+  if (!SYNC_KEY) {
+    logger.error("RTBALI_SYNC_KEY not configured — rejecting API request");
+    res.status(503).json({ error: "sync key not configured" });
+    return false;
+  }
   if (req.get("x-rtbali-sync-key") === SYNC_KEY) return true;
   res.status(401).json({ error: "Bad sync key" });
   return false;
 }
 
+function createdAtMillis(data) {
+  const v = data?.createdAt;
+  if (!v) return 0;
+  if (typeof v.toMillis === "function") return v.toMillis();
+  const t = Date.parse(v);
+  return Number.isFinite(t) ? t : 0;
+}
+
 async function exportDb(tripId) {
-  const [trip, expenses, members, receipts] = await Promise.all([
+  const [trip, expenseDocs, members, receipts] = await Promise.all([
     tripRef(tripId).get(),
-    tripRef(tripId).collection("expenses").orderBy("createdAt", "desc").limit(500).get(),
+    fetchAllDocs(tripRef(tripId).collection("expenses")),
     tripRef(tripId).collection("members").get(),
     tripRef(tripId).collection("receipts").orderBy("createdAt", "desc").limit(200).get()
   ]);
+  const expenses = expenseDocs
+    .map((doc) => ({ id: doc.id, ...toPlain(doc.data()) }))
+    .sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
   return {
     ...toPlain(trip.data()?.db || {}),
     firebase: {
@@ -1664,7 +1863,7 @@ async function exportDb(tripId) {
       members: members.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) })),
       receipts: receipts.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) }))
     },
-    expenses: expenses.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) }))
+    expenses
   };
 }
 
@@ -1676,8 +1875,11 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
     const path = req.path.replace(/^\/+/, "");
 
     if (req.method === "GET" && path === "expenses") {
-      const snap = await tripRef(tripId).collection("expenses").orderBy("createdAt", "desc").limit(500).get();
-      return res.json({ expenses: snap.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) })) });
+      const docs = await fetchAllDocs(tripRef(tripId).collection("expenses"));
+      const expenses = docs
+        .map((doc) => ({ id: doc.id, ...toPlain(doc.data()) }))
+        .sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
+      return res.json({ expenses });
     }
 
     if ((req.method === "POST" || req.method === "DELETE") && path === "expense/delete") {
@@ -1747,6 +1949,10 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
     }
 
     if (req.method === "POST" && path === "receipt") {
+      const clientKey = (req.get("x-forwarded-for") || req.ip || "web").split(",")[0].trim();
+      if (!(await allowOcr(tripId, `web-${clientKey}`))) {
+        return res.status(429).json({ error: "Too many OCR requests; slow down." });
+      }
       const { dataUrl, base64, mimeType } = req.body || {};
       const raw = dataUrl ? String(dataUrl).split(",").pop() : base64;
       if (!raw) return res.status(400).json({ error: "Expected dataUrl or base64 image" });
@@ -1764,3 +1970,9 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
     return res.status(500).json({ error: error.message });
   }
 });
+
+// Exposed for unit tests (node --test). Pure functions only — no side effects.
+module.exports._internal = {
+  num, splitUnits, shares, calcFromBillItems, expenseTotal,
+  parseOcrLineItems, parseExpenseText, normalizeMemberName, STATE, ASSIGN
+};
