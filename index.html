@@ -418,6 +418,8 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
       <button class="btn ghost" id="printBtn">Print</button>
       <button class="btn ghost" id="exportBtn">Export</button>
       <label class="btn ghost file-btn">Import<input id="importInput" type="file" accept="application/json"></label>
+      <button class="btn ghost" id="cloudPushBtn" title="Push local data to the cloud">↑ Cloud</button>
+      <button class="btn ghost" id="cloudPullBtn" title="Pull data from the cloud">↓ Cloud</button>
       <button class="btn danger" id="resetBtn">Reset</button>
     </div>
   </header>
@@ -482,6 +484,11 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
 /* ---------- constants ---------- */
 const STORAGE_KEY = "rtbaliDbV3";
 const THEME_KEY = "rtbaliTheme";
+// Cloud sync config lives in localStorage (never committed). The sync key is a
+// shared secret — keep it out of source. URL defaults to the deployed API.
+const SYNC_URL_KEY = "rtbaliSyncUrl";
+const SYNC_SECRET_KEY = "rtbaliSyncKey";
+const DEFAULT_API = "https://api-5chgqok6zq-et.a.run.app";
 const fmt = new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", maximumFractionDigits: 0 });
 const fmtN = new Intl.NumberFormat("id-ID");
 const $ = (id) => document.getElementById(id);
@@ -684,11 +691,15 @@ function arr(v, fallback){ return Array.isArray(v) && v.length ? v : fallback; }
 function fixDate(v){
   if (v == null || v === "") return v;
   const s = String(v).trim();
-  if (/^\d{4,5}$/.test(s)) { // excel serial
+  // Excel serial dates only — a realistic 5-digit serial (~1982–2064).
+  // 4-digit values like a bare year ("2026") must NOT be converted.
+  if (/^\d{5}$/.test(s)) {
     const n = parseInt(s,10);
-    const ms = (n - 25569) * 86400000;
-    const dt = new Date(ms);
-    if (!isNaN(dt)) return dt.toISOString().slice(0,10);
+    if (n >= 30000 && n <= 60000) {
+      const ms = (n - 25569) * 86400000;
+      const dt = new Date(ms);
+      if (!isNaN(dt)) return dt.toISOString().slice(0,10);
+    }
   }
   return s;
 }
@@ -731,6 +742,8 @@ function bindEvents(){
   $("printBtn").addEventListener("click", ()=>window.print());
   $("exportBtn").addEventListener("click", exportDb);
   $("importInput").addEventListener("change", importDb);
+  $("cloudPushBtn").addEventListener("click", cloudPush);
+  $("cloudPullBtn").addEventListener("click", cloudPull);
   $("resetBtn").addEventListener("click", resetSeed);
   $("editForm").addEventListener("submit", saveEditor);
   $("closeBtn").addEventListener("click", ()=>$("dialog").close());
@@ -1808,6 +1821,76 @@ async function resetSeed(){
   db = normalize(seed);
   const p=$("syncState"); p.classList.remove("dirty"); p.innerHTML='<span class="led"></span> Seed loaded';
   renderAll(); toast("Reset to seed");
+}
+
+/* ============================================================
+   CLOUD SYNC — push local db to /import, pull from /export.
+   API URL + sync key are stored in localStorage, never in source.
+   ============================================================ */
+function cloudConfig(){
+  return { url: store.get(SYNC_URL_KEY) || "", key: store.get(SYNC_SECRET_KEY) || "" };
+}
+function ensureCloudConfig(){
+  let { url, key } = cloudConfig();
+  if(!url){
+    url = prompt("Cloud API base URL", DEFAULT_API);
+    if(!url) return null;
+    url = url.trim().replace(/\/+$/,""); store.set(SYNC_URL_KEY, url);
+  }
+  if(!key){
+    key = prompt("Sync key (kept only in this browser)");
+    if(!key) return null;
+    key = key.trim(); store.set(SYNC_SECRET_KEY, key);
+  }
+  return { url, key };
+}
+function setSyncPill(text, dirty){
+  const p=$("syncState"); if(!p) return;
+  p.classList.toggle("dirty", !!dirty);
+  p.innerHTML='<span class="led"></span> '+text;
+}
+async function postImport(cfg, force){
+  const r = await fetch(cfg.url + "/import" + (force?"?force=1":""), {
+    method:"POST",
+    headers:{ "content-type":"application/json", "x-rtbali-sync-key": cfg.key },
+    body: JSON.stringify({ db })
+  });
+  const j = await r.json().catch(()=>({}));
+  return { r, j };
+}
+async function cloudPush(){
+  const cfg = ensureCloudConfig(); if(!cfg) return;
+  try{
+    setSyncPill("Pushing…", true); toast("Pushing to cloud…");
+    let { r, j } = await postImport(cfg, false);
+    if(r.status === 409){
+      // Server's safety guard tripped (would delete a large share of expenses).
+      if(!confirm(`Cloud says this would delete ${j.wouldPrune} of ${j.existing} cloud expenses (you're sending ${j.incoming}). Force overwrite?`)){
+        setSyncPill("Push cancelled", true); return;
+      }
+      ({ r, j } = await postImport(cfg, true));
+    }
+    if(r.status === 401){ store.remove(SYNC_SECRET_KEY); throw new Error("Bad sync key — cleared; try again."); }
+    if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+    setSyncPill(`Pushed · ${j.importedExpenses} expenses`, false);
+    toast(`Pushed ${j.importedExpenses} expenses (pruned ${j.prunedExpenses||0})`);
+  }catch(err){ setSyncPill("Push failed", true); alert("Push failed: "+err.message); }
+}
+async function cloudPull(){
+  const cfg = ensureCloudConfig(); if(!cfg) return;
+  if(!confirm("Pull cloud data and replace what's in this browser? Unsaved local changes will be lost.")) return;
+  try{
+    setSyncPill("Pulling…", true); toast("Pulling from cloud…");
+    const r = await fetch(cfg.url + "/export", { headers:{ "x-rtbali-sync-key": cfg.key } });
+    const j = await r.json().catch(()=>({}));
+    if(r.status === 401){ store.remove(SYNC_SECRET_KEY); throw new Error("Bad sync key — cleared; try again."); }
+    if(!r.ok) throw new Error(j.error || ("HTTP "+r.status));
+    const incoming = j.db || j;
+    if(!incoming || !Array.isArray(incoming.expenses)) throw new Error("Unexpected response shape.");
+    db = normalize(incoming); persist(); renderAll();
+    setSyncPill(`Pulled · ${db.expenses.length} expenses`, false);
+    toast(`Pulled ${db.expenses.length} expenses from cloud`);
+  }catch(err){ setSyncPill("Pull failed", true); alert("Pull failed: "+err.message); }
 }
 
 /* ============================================================

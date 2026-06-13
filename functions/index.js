@@ -1926,6 +1926,36 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
       if (!importedDb || !Array.isArray(importedDb.expenses)) {
         return res.status(400).json({ error: "Expected RTBALI db with expenses array" });
       }
+      const force = ["1", "true", "yes"].includes(String(req.query.force || "").toLowerCase());
+
+      // Read current expenses up front so we can assess the prune impact BEFORE
+      // mutating anything. The prune below deletes every existing expense not in
+      // the payload — a partial/empty import would otherwise wipe data silently.
+      const existingDocs = await fetchAllDocs(tripRef(tripId).collection("expenses"));
+      const importedIds = new Set(importedDb.expenses.map((e) => e.id).filter(Boolean));
+      const wouldPrune = existingDocs.filter((d) => !importedIds.has(d.id)).length;
+      const riskyEmpty = importedDb.expenses.length === 0 && existingDocs.length > 0;
+      const riskyMass = existingDocs.length > 0 && wouldPrune > existingDocs.length * 0.5;
+      if (!force && (riskyEmpty || riskyMass)) {
+        return res.status(409).json({
+          error: "Refusing risky import — it would delete a large share of existing expenses.",
+          wouldPrune, existing: existingDocs.length, incoming: importedDb.expenses.length,
+          hint: "If this is intentional, resend to /import?force=1"
+        });
+      }
+
+      // Snapshot existing expenses before mutating so a bad import is recoverable.
+      // Stored as a JSON string to dodge the 20-level depth limit; falls back to
+      // ids-only if the snapshot would exceed the ~1 MiB document limit.
+      if (existingDocs.length) {
+        const snapshot = existingDocs.map((d) => ({ id: d.id, ...toPlain(d.data()) }));
+        const json = JSON.stringify(snapshot);
+        const backupDoc = json.length <= 900000
+          ? { at: nowField(), count: snapshot.length, reason: "import", expensesJson: json }
+          : { at: nowField(), count: snapshot.length, reason: "import", truncated: true, ids: snapshot.map((s) => s.id) };
+        await tripRef(tripId).collection("backups").doc(`import-${Date.now()}`).set(backupDoc);
+      }
+
       // Store the web db as a JSON string (immune to Firestore's 20-level depth
       // limit) and drop the legacy nested `db` map. Expenses are excluded — they
       // live in the expenses subcollection and would otherwise double the doc
@@ -1959,9 +1989,8 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
           logger.error("Skipped invalid expense on import", { expenseId, error: err.message });
         }
       });
-      const existingExpenses = await tripRef(tripId).collection("expenses").get();
       let prunedExpenses = 0;
-      existingExpenses.forEach((doc) => {
+      existingDocs.forEach((doc) => {
         if (importedExpenseIds.has(doc.id)) return;
         const expense = doc.data();
         batch.delete(doc.ref);

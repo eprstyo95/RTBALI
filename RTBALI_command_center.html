@@ -646,11 +646,15 @@ function arr(v, fallback){ return Array.isArray(v) && v.length ? v : fallback; }
 function fixDate(v){
   if (v == null || v === "") return v;
   const s = String(v).trim();
-  if (/^\d{4,5}$/.test(s)) { // excel serial
+  // Excel serial dates only — a realistic 5-digit serial (~1982–2064).
+  // 4-digit values like a bare year ("2026") must NOT be converted.
+  if (/^\d{5}$/.test(s)) {
     const n = parseInt(s,10);
-    const ms = (n - 25569) * 86400000;
-    const dt = new Date(ms);
-    if (!isNaN(dt)) return dt.toISOString().slice(0,10);
+    if (n >= 30000 && n <= 60000) {
+      const ms = (n - 25569) * 86400000;
+      const dt = new Date(ms);
+      if (!isNaN(dt)) return dt.toISOString().slice(0,10);
+    }
   }
   return s;
 }
