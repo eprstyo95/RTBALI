@@ -107,6 +107,18 @@ async function allowOcr(tripId, chatId) {
   }
 }
 
+// The web app's full database is stored as a JSON string (dbJson) rather than a
+// nested map — Firestore rejects documents deeper than 20 levels, and the web
+// db can nest past that. Reads tolerate both the new string and the legacy
+// `db` map written by older deploys.
+function tripDbBlob(tripData) {
+  if (!tripData) return {};
+  if (typeof tripData.dbJson === "string") {
+    try { return JSON.parse(tripData.dbJson) || {}; } catch (_) { return {}; }
+  }
+  return tripData.db || {};
+}
+
 function rupiah(value) {
   return new Intl.NumberFormat("id-ID", {
     style: "currency",
@@ -706,7 +718,7 @@ async function settlement(tripId) {
     tripRef(tripId).get(),
     fetchAllDocs(tripRef(tripId).collection("expenses").where("status", "==", "confirmed")),
   ]);
-  const units = splitUnits(tripSnap.data()?.db?.settings || {});
+  const units = splitUnits(tripDbBlob(tripSnap.data()).settings || {});
   const members = memberLabels();
   const paid = {};
   const owes = {};
@@ -1857,7 +1869,7 @@ async function exportDb(tripId) {
     .map((doc) => ({ id: doc.id, ...toPlain(doc.data()) }))
     .sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
   return {
-    ...toPlain(trip.data()?.db || {}),
+    ...toPlain(tripDbBlob(trip.data())),
     firebase: {
       trip: toPlain(trip.data() || {}),
       members: members.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) })),
@@ -1914,20 +1926,38 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
       if (!importedDb || !Array.isArray(importedDb.expenses)) {
         return res.status(400).json({ error: "Expected RTBALI db with expenses array" });
       }
-      await tripRef(tripId).set({ db: importedDb, updatedAt: nowField(), createdAt: nowField() }, { merge: true });
+      // Store the web db as a JSON string (immune to Firestore's 20-level depth
+      // limit) and drop the legacy nested `db` map. Expenses are excluded — they
+      // live in the expenses subcollection and would otherwise double the doc
+      // size and risk the 1 MiB limit.
+      const { expenses: _omitExpenses, ...dbMeta } = importedDb;
+      await tripRef(tripId).set({
+        dbJson: JSON.stringify(dbMeta),
+        db: admin.firestore.FieldValue.delete(),
+        updatedAt: nowField(), createdAt: nowField()
+      }, { merge: true });
       const batch = db.batch();
       const importedExpenseIds = new Set();
+      const skippedExpenses = [];
       importedDb.expenses.forEach((expense) => {
         const expenseId = expense.id || id("web-exp");
-        importedExpenseIds.add(expenseId);
-        batch.set(tripRef(tripId).collection("expenses").doc(expenseId), {
-          ...expense,
-          id: expenseId,
-          source: expense.source || "web",
-          status: expense.status || "confirmed",
-          createdAt: expense.createdAt || nowField(),
-          updatedAt: nowField()
-        }, { merge: true });
+        try {
+          batch.set(tripRef(tripId).collection("expenses").doc(expenseId), {
+            ...expense,
+            id: expenseId,
+            source: expense.source || "web",
+            status: expense.status || "confirmed",
+            createdAt: expense.createdAt || nowField(),
+            updatedAt: nowField()
+          }, { merge: true });
+          importedExpenseIds.add(expenseId);
+        } catch (err) {
+          // A single malformed expense (too deep / cyclic) shouldn't fail the
+          // whole import — skip it, keep it in the prune-exempt set, and report.
+          importedExpenseIds.add(expenseId);
+          skippedExpenses.push({ id: expenseId, reason: err.message });
+          logger.error("Skipped invalid expense on import", { expenseId, error: err.message });
+        }
       });
       const existingExpenses = await tripRef(tripId).collection("expenses").get();
       let prunedExpenses = 0;
@@ -1945,7 +1975,12 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
         }
       });
       await batch.commit();
-      return res.json({ ok: true, importedExpenses: importedDb.expenses.length, prunedExpenses });
+      return res.json({
+        ok: true,
+        importedExpenses: importedDb.expenses.length - skippedExpenses.length,
+        prunedExpenses,
+        ...(skippedExpenses.length ? { skipped: skippedExpenses } : {})
+      });
     }
 
     if (req.method === "POST" && path === "receipt") {
