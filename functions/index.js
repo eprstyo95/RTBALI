@@ -354,10 +354,10 @@ function parseOcrLineItems(ocrText) {
       flushPending(); continue;
     }
     if (taxRe.test(line)) {
-      const m = line.match(/([\d.,]{4,})/);
+      const m = line.match(/([\d.,]{4,})\s*$/);  // last number = the amount, not the % rate
       if (m) {
         taxAmount += num(m[1]);
-        if (!taxLabel) taxLabel = line.replace(/[\d.,:\s]+$/, "").trim().toUpperCase();
+        if (!taxLabel) taxLabel = line.replace(/[\s\d.,:%]+$/, "").trim().toUpperCase();
       }
       flushPending(); continue;
     }
