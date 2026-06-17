@@ -444,8 +444,7 @@ function calcFromBillItems(draft) {
 function itemQAKeyboard() {
   return {
     keyboard: [
-      [{ text: "TJ" }, { text: "EK" }, { text: "Both" }],
-      [{ text: "Invalid" }],
+      [{ text: "TJ" }, { text: "EK" }, { text: "Both" }, { text: "Invalid" }],
       [{ text: "/cancel" }]
     ],
     resize_keyboard: true,
