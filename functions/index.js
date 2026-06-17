@@ -439,55 +439,37 @@ function calcFromBillItems(draft) {
   };
 }
 
-function itemSplitText(draft) {
-  const items = draft.billItems || [];
-  const tax = num(draft.billTax) || 0;
-  const taxLabel = draft.billTaxLabel || "Tax";
-  const vendor = draft.vendor || draft.description || "Receipt";
-  const total = num(draft.amount) || 0;
-  const lines = [
-    `<b>📋 ${htmlEscape(vendor)}</b>  ${rupiah(total)}`,
-    "Tap buttons to assign each item to TJ, EK, or Both:"
-  ];
-  for (const item of items) {
-    const icon = item.assign === "TJ" ? "👤TJ" : item.assign === "EK" ? "👤EK" : "👥Both";
-    const qtyStr = item.qty > 1 ? ` ×${item.qty}` : "";
-    lines.push(`${item.idx + 1}. ${htmlEscape(item.name)}${qtyStr}  <b>${rupiah(item.amount)}</b>  → ${icon}`);
-  }
-  if (tax) lines.push(`\n${htmlEscape(taxLabel)}: ${rupiah(tax)} (split proportionally)`);
-  const foodCalc = calcFromBillItems(draft);
-  const s = shares({ ...draft, ...foodCalc });
-  lines.push(`\nTJ: <b>${rupiah(Math.round(s.TJ))}</b>   EK: <b>${rupiah(Math.round(s.EK))}</b>`);
-  lines.push(`Payer: <b>${htmlEscape(draft.payer || "TJ")}</b> · <b>${htmlEscape(draft.payment || "Cash")}</b>`);
-  return lines.join("\n");
+function itemQAKeyboard() {
+  return {
+    keyboard: [
+      [{ text: "TJ" }, { text: "EK" }, { text: "Both" }],
+      [{ text: "/cancel" }]
+    ],
+    resize_keyboard: true,
+    one_time_keyboard: false,
+    input_field_placeholder: "Who had this item?"
+  };
 }
 
-function itemSplitKeyboard(draft) {
+function itemQAText(draft, itemIdx, warning = "") {
   const items = draft.billItems || [];
-  const expId = draft.id;
-  const payer = draft.payer || "TJ";
-  const payment = draft.payment || "Cash";
-  const rows = items.map((item) => {
-    const isTJ = item.assign === "TJ";
-    const isEK = item.assign === "EK";
-    const isBoth = !isTJ && !isEK;
-    return [
-      { text: `${item.idx + 1} ${isTJ ? "✓" : ""}TJ`,   callback_data: `item:a:${expId}:${item.idx}:TJ`   },
-      { text: `${item.idx + 1} ${isEK ? "✓" : ""}EK`,   callback_data: `item:a:${expId}:${item.idx}:EK`   },
-      { text: `${item.idx + 1} ${isBoth ? "✓" : ""}Both`, callback_data: `item:a:${expId}:${item.idx}:Both` }
-    ];
-  });
-  rows.push([
-    { text: `${payer === "TJ" ? "✓" : ""}Paid TJ`, callback_data: `exp:p:${expId}:TJ` },
-    { text: `${payer === "EK" ? "✓" : ""}Paid EK`, callback_data: `exp:p:${expId}:EK` }
-  ]);
-  rows.push([
-    { text: `${payment === "Cash" ? "✓" : ""}Cash`, callback_data: `exp:m:${expId}:cash` },
-    { text: `${payment === "QRIS" ? "✓" : ""}QRIS`, callback_data: `exp:m:${expId}:qris` },
-    { text: `${payment === "Card" ? "✓" : ""}Card`, callback_data: `exp:m:${expId}:card` }
-  ]);
-  rows.push([{ text: "✅ Confirm & Save", callback_data: `exp:c:${expId}` }]);
-  return { inline_keyboard: rows };
+  const item = items[itemIdx];
+  const vendor = draft.vendor || draft.description || "Receipt";
+  const lines = [
+    `<b>📋 ${htmlEscape(vendor)}</b>  ${rupiah(num(draft.amount))}`,
+    `Item ${itemIdx + 1} of ${items.length}`
+  ];
+  if (item) {
+    const qtyStr = item.qty > 1 ? ` ×${item.qty}` : "";
+    lines.push(`\n<b>${htmlEscape(item.name)}${qtyStr}</b>  ${rupiah(item.amount)}`);
+    lines.push("Who had this? Tap <b>TJ</b>, <b>EK</b>, or <b>Both</b> below.");
+  }
+  if (warning) lines.push(`\n⚠️ ${warning}`);
+  const answered = items.slice(0, itemIdx);
+  if (answered.length) {
+    lines.push(`\n<blockquote expandable>${answered.map((i) => `${htmlEscape(i.name)}: ${i.assign}`).join("\n")}</blockquote>`);
+  }
+  return lines.join("\n");
 }
 
 function telegramResponse(text, extra = {}) {
@@ -1021,6 +1003,78 @@ async function consumePendingAmount(tripId, user, chatId, text, member) {
   return "";
 }
 
+// ── itemized receipt Q&A: ask "who had this?" one item at a time ────────────
+async function startItemQA(tripId, user, chatId, draft) {
+  const msgId = await sendTelegramCapture(chatId, itemQAText(draft, 0), { reply_markup: itemQAKeyboard() });
+  await pendingRef(tripId, user).set({
+    type: "itemQA",
+    expenseId: draft.id,
+    itemIdx: 0,
+    draftMsgId: msgId,
+    chatId: String(chatId),
+    updatedAt: nowField()
+  }, { merge: false });
+}
+
+async function consumeItemAnswer(tripId, user, chatId, text, member) {
+  if (!user?.id) return null;
+  const ref = pendingRef(tripId, user);
+  const snap = await ref.get();
+  if (!snap.exists) return null;
+  const state = snap.data();
+  if (state.type !== "itemQA") return null;
+
+  const lower = clean(text).toLowerCase();
+  if (lower === "/cancel") {
+    await editTelegramMessage(Number(state.chatId), state.draftMsgId, "❌ Receipt draft cancelled.");
+    await tripRef(tripId).collection("expenses").doc(state.expenseId).delete();
+    await ref.delete();
+    return telegramResponse("Cancelled.", { reply_markup: { remove_keyboard: true } });
+  }
+  if (lower.startsWith("/")) return null; // let other commands (e.g. /help) pass through
+
+  const docRef = tripRef(tripId).collection("expenses").doc(state.expenseId);
+  const expSnap = await docRef.get();
+  if (!expSnap.exists) { await ref.delete(); return "Draft not found."; }
+  const draft = { id: expSnap.id, ...expSnap.data() };
+  const items = (draft.billItems || []).map((i) => ({ ...i }));
+  const itemIdx = state.itemIdx;
+  const item = items[itemIdx];
+  if (!item) { await ref.delete(); return null; }
+
+  const who = lower === "tj" ? "TJ" : lower === "ek" ? "EK" : lower === "both" ? "Both" : null;
+  if (!who) {
+    await editTelegramMessage(Number(state.chatId), state.draftMsgId,
+      itemQAText(draft, itemIdx, "Tap TJ, EK or Both."));
+    return "";
+  }
+
+  item.assign = who;
+  const nextIdx = itemIdx + 1;
+
+  if (nextIdx < items.length) {
+    await docRef.update({ billItems: items, updatedAt: nowField() });
+    await editTelegramMessage(Number(state.chatId), state.draftMsgId, itemQAText({ ...draft, billItems: items }, nextIdx));
+    await ref.set({ ...state, itemIdx: nextIdx, updatedAt: nowField() }, { merge: false });
+    return "";
+  }
+
+  // All items answered — fold into the standard meal-split draft and switch to the normal session flow
+  const foodCalc = calcFromBillItems({ ...draft, billItems: items });
+  const merged = { ...draft, billItems: items, ...foodCalc };
+  const finalAmount = expenseTotal(merged);
+  await docRef.update({ billItems: items, ...foodCalc, amount: finalAmount, updatedAt: nowField() });
+  const finalDraft = { ...merged, amount: finalAmount };
+
+  await editTelegramMessage(Number(state.chatId), state.draftMsgId, "✅ All items assigned.");
+  await ref.delete();
+  const msgId = await sendTelegramCapture(Number(state.chatId),
+    sessionText(finalDraft, "Set payer/payment below, then /confirm."),
+    { reply_markup: sessionKeyboard(finalDraft) });
+  await setSession(tripId, user, draft.id, msgId, state.chatId);
+  return "";
+}
+
 async function setCategoryDraft(tripId, args, member, user) {
   const category = categoryUpdate(args.join(" ") || "Other");
   const draft = await findLatestDraftExpense(tripId, member);
@@ -1204,8 +1258,8 @@ async function handlePhoto(tripId, message, member, user, chatId) {
   });
   await saveExpense(tripId, draft);
   const hasItems = (draft.billItems || []).length > 0;
-  if (hasItems && chatId) {
-    await sendTelegram(chatId, itemSplitText(draft), { reply_markup: itemSplitKeyboard(draft) });
+  if (hasItems && chatId && user?.id) {
+    await startItemQA(tripId, user, chatId, draft);
     return "";
   }
   if (chatId && user?.id) {
@@ -1265,6 +1319,9 @@ async function handleCommand(tripId, message) {
   const member = await getMemberByTelegram(tripId, user);
   const [commandRaw, ...args] = text.split(/\s+/);
   const command = commandRaw.toLowerCase().replace(/@[\w_]+$/, "");
+  const itemAnswerResult = await consumeItemAnswer(tripId, user, chatId, text, member);
+  if (itemAnswerResult !== null) return itemAnswerResult || "";
+
   const pendingResult = await consumePendingAmount(tripId, user, chatId, text, member);
   if (pendingResult !== null) return pendingResult || "";
 
@@ -1386,36 +1443,6 @@ async function handleCallback(tripId, callbackQuery) {
     return;
   }
 
-  if (data.startsWith("item:a:")) {
-    // item:a:{expenseId}:{itemIdx}:{who}
-    const parts = data.split(":");
-    const expenseId = parts[2];
-    const itemIdx = parseInt(parts[3]);
-    const who = parts[4]; // "TJ", "EK", "Both"
-    if (!expenseId || isNaN(itemIdx) || !["TJ", "EK", "Both"].includes(who)) {
-      await answerCallbackQuery(callbackQuery.id, "Invalid action");
-      return;
-    }
-    const docRef = tripRef(tripId).collection("expenses").doc(expenseId);
-    const snap = await docRef.get();
-    if (!snap.exists) { await answerCallbackQuery(callbackQuery.id, "Draft not found"); return; }
-    const draft = { id: snap.id, ...snap.data() };
-    if (draft.status !== "draft") { await answerCallbackQuery(callbackQuery.id, "Already confirmed"); return; }
-    const items = (draft.billItems || []).map((i) => ({ ...i }));
-    const item = items.find((i) => i.idx === itemIdx);
-    if (!item) { await answerCallbackQuery(callbackQuery.id, "Item not found"); return; }
-    item.assign = who;
-    const foodCalc = calcFromBillItems({ ...draft, billItems: items });
-    await docRef.update({ billItems: items, ...foodCalc, updatedAt: nowField() });
-    const updatedDraft = { ...draft, billItems: items, ...foodCalc };
-    await answerCallbackQuery(callbackQuery.id, `${item.name} → ${who}`);
-    const text = itemSplitText(updatedDraft);
-    const keyboard = itemSplitKeyboard(updatedDraft);
-    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: keyboard });
-    if (!editResponse?.ok) await sendTelegram(chatId, text, { reply_markup: keyboard });
-    return;
-  }
-
   if (data.startsWith("exp:")) {
     const [, action, expenseId, value] = data.split(":");
     if (!expenseId) return;
@@ -1461,12 +1488,10 @@ async function handleCallback(tripId, callbackQuery) {
         ? `Split set to ${draft.split}.`
         : `Payment set to ${draft.payment}.`;
     await answerCallbackQuery(callbackQuery.id, label);
-    const hasItems = (draft.billItems || []).length > 0;
-    const text = hasItems ? itemSplitText(draft) : ocrDraftText(draft);
-    const keyboard = hasItems ? itemSplitKeyboard(draft) : ocrDraftKeyboard(expenseId);
-    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: keyboard });
+    const text = ocrDraftText(draft);
+    const editResponse = await editTelegramMessage(chatId, messageId, text, { reply_markup: ocrDraftKeyboard(expenseId) });
     if (!editResponse?.ok) {
-      await sendTelegram(chatId, `${label}\n\n${text}`, { reply_markup: keyboard });
+      await sendTelegram(chatId, `${label}\n\n${text}`, { reply_markup: ocrDraftKeyboard(expenseId) });
     }
     return;
   }
