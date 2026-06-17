@@ -8,6 +8,7 @@ const vision = require("@google-cloud/vision");
 admin.initializeApp();
 
 const db = admin.firestore();
+db.settings({ ignoreUndefinedProperties: true });
 const bucket = admin.storage().bucket(process.env.RTBALI_STORAGE_BUCKET || undefined);
 const visionClient = new vision.ImageAnnotatorClient();
 
@@ -940,10 +941,18 @@ async function clearSession(tripId, user) {
 // Edit the one draft message in-place (no new message).
 // reply_markup is intentionally omitted — editMessageText only accepts InlineKeyboardMarkup,
 // not ReplyKeyboardMarkup. The reply keyboard persists in the chat automatically.
+// Telegram occasionally gets a chat/message stuck where edits permanently fail
+// ("Bad Request: message can't be edited") — when that happens, fall back to sending
+// a fresh message and re-point the session at it so the flow doesn't stall silently.
 async function refreshSessionMsg(tripId, user, draft, prompt = "") {
   const sess = await getSession(tripId, user);
   if (!sess?.draftMsgId || !sess?.chatId) return;
-  await editTelegramMessage(Number(sess.chatId), sess.draftMsgId, sessionText(draft, prompt));
+  const result = await editTelegramMessage(Number(sess.chatId), sess.draftMsgId, sessionText(draft, prompt));
+  if (!result?.ok) {
+    const msgId = await sendTelegramCapture(Number(sess.chatId), sessionText(draft, prompt),
+      { reply_markup: sessionKeyboard(draft) });
+    if (msgId) await setSession(tripId, user, sess.expenseId, msgId, sess.chatId);
+  }
 }
 
 // ── start an expense (text command or OCR) ───────────────────────────────────
@@ -1016,6 +1025,18 @@ async function startItemQA(tripId, user, chatId, draft) {
   }, { merge: false });
 }
 
+// Edit the running Q&A message in place (editMessageText can't carry a ReplyKeyboardMarkup,
+// so the edit itself never includes one — the keyboard sent with the first question persists
+// in the chat). If the edit fails (e.g. message_id missing/stale), send a fresh message with
+// the keyboard instead so the user always sees the next question and can still answer.
+async function showItemQAStep(state, chatId, text, keyboardExtra = {}) {
+  const editResult = state.draftMsgId
+    ? await editTelegramMessage(Number(chatId), state.draftMsgId, text)
+    : { ok: false };
+  if (editResult?.ok) return state.draftMsgId;
+  return await sendTelegramCapture(Number(chatId), text, keyboardExtra);
+}
+
 async function consumeItemAnswer(tripId, user, chatId, text, member) {
   if (!user?.id) return null;
   const ref = pendingRef(tripId, user);
@@ -1026,53 +1047,60 @@ async function consumeItemAnswer(tripId, user, chatId, text, member) {
 
   const lower = clean(text).toLowerCase();
   if (lower === "/cancel") {
-    await editTelegramMessage(Number(state.chatId), state.draftMsgId, "❌ Receipt draft cancelled.");
+    await showItemQAStep(state, state.chatId, "❌ Receipt draft cancelled.");
     await tripRef(tripId).collection("expenses").doc(state.expenseId).delete();
     await ref.delete();
     return telegramResponse("Cancelled.", { reply_markup: { remove_keyboard: true } });
   }
   if (lower.startsWith("/")) return null; // let other commands (e.g. /help) pass through
 
-  const docRef = tripRef(tripId).collection("expenses").doc(state.expenseId);
-  const expSnap = await docRef.get();
-  if (!expSnap.exists) { await ref.delete(); return "Draft not found."; }
-  const draft = { id: expSnap.id, ...expSnap.data() };
-  const items = (draft.billItems || []).map((i) => ({ ...i }));
-  const itemIdx = state.itemIdx;
-  const item = items[itemIdx];
-  if (!item) { await ref.delete(); return null; }
+  try {
+    const docRef = tripRef(tripId).collection("expenses").doc(state.expenseId);
+    const expSnap = await docRef.get();
+    if (!expSnap.exists) { await ref.delete(); return "Draft not found."; }
+    const draft = { id: expSnap.id, ...expSnap.data() };
+    const items = (draft.billItems || []).map((i) => ({ ...i }));
+    const itemIdx = state.itemIdx;
+    const item = items[itemIdx];
+    if (!item) { await ref.delete(); return null; }
 
-  const who = lower === "tj" ? "TJ" : lower === "ek" ? "EK" : lower === "both" ? "Both" : null;
-  if (!who) {
-    await editTelegramMessage(Number(state.chatId), state.draftMsgId,
-      itemQAText(draft, itemIdx, "Tap TJ, EK or Both."));
+    const who = lower === "tj" ? "TJ" : lower === "ek" ? "EK" : lower === "both" ? "Both" : null;
+    if (!who) {
+      const msgId = await showItemQAStep(state, state.chatId,
+        itemQAText(draft, itemIdx, "Tap TJ, EK or Both."), { reply_markup: itemQAKeyboard() });
+      if (msgId !== state.draftMsgId) await ref.set({ ...state, draftMsgId: msgId }, { merge: false });
+      return "";
+    }
+
+    item.assign = who;
+    const nextIdx = itemIdx + 1;
+
+    if (nextIdx < items.length) {
+      await docRef.update({ billItems: items, updatedAt: nowField() });
+      const msgId = await showItemQAStep(state, state.chatId,
+        itemQAText({ ...draft, billItems: items }, nextIdx), { reply_markup: itemQAKeyboard() });
+      await ref.set({ ...state, itemIdx: nextIdx, draftMsgId: msgId, updatedAt: nowField() }, { merge: false });
+      return "";
+    }
+
+    // All items answered — fold into the standard meal-split draft and switch to the normal session flow
+    const foodCalc = calcFromBillItems({ ...draft, billItems: items });
+    const merged = { ...draft, billItems: items, ...foodCalc };
+    const finalAmount = expenseTotal(merged);
+    await docRef.update({ billItems: items, ...foodCalc, amount: finalAmount, updatedAt: nowField() });
+    const finalDraft = { ...merged, amount: finalAmount };
+
+    await showItemQAStep(state, state.chatId, "✅ All items assigned.");
+    await ref.delete();
+    const msgId = await sendTelegramCapture(Number(state.chatId),
+      sessionText(finalDraft, "Set payer/payment below, then /confirm."),
+      { reply_markup: sessionKeyboard(finalDraft) });
+    await setSession(tripId, user, draft.id, msgId, state.chatId);
     return "";
+  } catch (error) {
+    logger.error("consumeItemAnswer failed", { error: error.message, stack: error.stack, state });
+    return telegramResponse(`Something went wrong continuing the item Q&A (${error.message}). Try again or /cancel.`);
   }
-
-  item.assign = who;
-  const nextIdx = itemIdx + 1;
-
-  if (nextIdx < items.length) {
-    await docRef.update({ billItems: items, updatedAt: nowField() });
-    await editTelegramMessage(Number(state.chatId), state.draftMsgId, itemQAText({ ...draft, billItems: items }, nextIdx));
-    await ref.set({ ...state, itemIdx: nextIdx, updatedAt: nowField() }, { merge: false });
-    return "";
-  }
-
-  // All items answered — fold into the standard meal-split draft and switch to the normal session flow
-  const foodCalc = calcFromBillItems({ ...draft, billItems: items });
-  const merged = { ...draft, billItems: items, ...foodCalc };
-  const finalAmount = expenseTotal(merged);
-  await docRef.update({ billItems: items, ...foodCalc, amount: finalAmount, updatedAt: nowField() });
-  const finalDraft = { ...merged, amount: finalAmount };
-
-  await editTelegramMessage(Number(state.chatId), state.draftMsgId, "✅ All items assigned.");
-  await ref.delete();
-  const msgId = await sendTelegramCapture(Number(state.chatId),
-    sessionText(finalDraft, "Set payer/payment below, then /confirm."),
-    { reply_markup: sessionKeyboard(finalDraft) });
-  await setSession(tripId, user, draft.id, msgId, state.chatId);
-  return "";
 }
 
 async function setCategoryDraft(tripId, args, member, user) {
