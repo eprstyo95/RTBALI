@@ -424,6 +424,7 @@ function calcFromBillItems(draft) {
   const tax = num(draft.billTax) || 0;
   let tjFood = 0, ekFood = 0, sharedFood = 0;
   for (const item of items) {
+    if (item.assign === "Invalid") continue;
     const a = num(item.amount);
     if (item.assign === "TJ") tjFood += a;
     else if (item.assign === "EK") ekFood += a;
@@ -444,6 +445,7 @@ function itemQAKeyboard() {
   return {
     keyboard: [
       [{ text: "TJ" }, { text: "EK" }, { text: "Both" }],
+      [{ text: "Invalid" }],
       [{ text: "/cancel" }]
     ],
     resize_keyboard: true,
@@ -463,7 +465,7 @@ function itemQAText(draft, itemIdx, warning = "") {
   if (item) {
     const qtyStr = item.qty > 1 ? ` ×${item.qty}` : "";
     lines.push(`\n<b>${htmlEscape(item.name)}${qtyStr}</b>  ${rupiah(item.amount)}`);
-    lines.push("Who had this? Tap <b>TJ</b>, <b>EK</b>, or <b>Both</b> below.");
+    lines.push("Who had this? Tap <b>TJ</b>, <b>EK</b>, or <b>Both</b> below. Not a real item? Tap <b>Invalid</b>.");
   }
   if (warning) lines.push(`\n⚠️ ${warning}`);
   const answered = items.slice(0, itemIdx);
@@ -1064,10 +1066,11 @@ async function consumeItemAnswer(tripId, user, chatId, text, member) {
     const item = items[itemIdx];
     if (!item) { await ref.delete(); return null; }
 
-    const who = lower === "tj" ? "TJ" : lower === "ek" ? "EK" : lower === "both" ? "Both" : null;
+    const who = lower === "tj" ? "TJ" : lower === "ek" ? "EK" : lower === "both" ? "Both"
+      : lower === "invalid" ? "Invalid" : null;
     if (!who) {
       const msgId = await showItemQAStep(state, state.chatId,
-        itemQAText(draft, itemIdx, "Tap TJ, EK or Both."), { reply_markup: itemQAKeyboard() });
+        itemQAText(draft, itemIdx, "Tap TJ, EK, Both, or Invalid."), { reply_markup: itemQAKeyboard() });
       if (msgId !== state.draftMsgId) await ref.set({ ...state, draftMsgId: msgId }, { merge: false });
       return "";
     }
