@@ -11,7 +11,8 @@ const assert = require("node:assert/strict");
 const { _internal } = require("../index.js");
 const {
   num, splitUnits, shares, calcFromBillItems, expenseTotal,
-  parseOcrLineItems, normalizeMemberName, ASSIGN
+  parseOcrLineItems, normalizeMemberName, ASSIGN,
+  splitJsonChunks, joinJsonChunks, parseJsonObject
 } = _internal;
 
 test("num parses Indonesian thousands, currency, and junk", () => {
@@ -124,4 +125,19 @@ test("parseOcrLineItems flags a misread amount (reconcile fails)", () => {
   const receipt = ["CAFE", "1 KOPI 2026", "TOTAL 25.000"].join("\n");
   const r = parseOcrLineItems(receipt);
   assert.equal(r.reconciled, false);
+});
+
+test("db JSON chunks split and reassemble exactly", () => {
+  const dbJson = JSON.stringify({
+    metadata: { trip: "RTBALI" },
+    notes: "Jalan-jalan ".repeat(40) + "Bali 🚗 ".repeat(80),
+    nested: { rows: [{ a: 1 }, { b: "two" }] }
+  });
+  const chunks = splitJsonChunks(dbJson, 200);
+  assert.ok(chunks.length > 1);
+  assert.ok(chunks.every((chunk) => Buffer.byteLength(chunk, "utf8") <= 200));
+
+  const docs = chunks.map((text, index) => ({ text, index })).reverse();
+  assert.equal(joinJsonChunks(docs), dbJson);
+  assert.deepEqual(parseJsonObject(joinJsonChunks(docs)), JSON.parse(dbJson));
 });

@@ -87,6 +87,13 @@ a:hover{text-decoration:underline}
 .btn.primary:hover{background:var(--teal-d);border-color:var(--teal-d)}
 .btn.quick-expense{background:var(--clay);border-color:var(--clay);color:#fff;box-shadow:0 10px 22px -12px var(--clay)}
 .btn.quick-expense:hover{background:var(--clay-d);border-color:var(--clay-d)}
+.btn.cloud-pull{background:var(--info-soft);border-color:color-mix(in srgb,var(--info) 36%,var(--line2));color:var(--info)}
+.btn.cloud-pull:hover{border-color:var(--info);background:color-mix(in srgb,var(--info-soft) 78%,var(--card))}
+.btn.cloud-merge{background:var(--teal-soft);border-color:color-mix(in srgb,var(--teal) 32%,var(--line2));color:var(--teal-d)}
+.btn.cloud-merge:hover{border-color:var(--teal);background:color-mix(in srgb,var(--teal-soft) 78%,var(--card))}
+.btn.cloud-push{background:var(--clay);border-color:var(--clay);color:#fff;box-shadow:0 10px 22px -12px var(--clay)}
+.btn.cloud-push:hover{background:var(--clay-d);border-color:var(--clay-d)}
+.btn.cloud-setup{background:var(--card2);border-color:var(--line2);color:var(--ink2)}
 .btn.ghost{background:transparent;box-shadow:none;border-color:var(--line2)}
 .btn.danger{color:var(--bad);border-color:color-mix(in srgb,var(--bad) 40%,var(--line2))}
 .btn.tiny{padding:5px 9px;font-size:12px;border-radius:9px;box-shadow:none}
@@ -215,6 +222,23 @@ select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns=
 .quick-ledger .last span{color:var(--muted);font-size:12px}
 .split-note{grid-column:1/-1;background:var(--info-soft);border:1px solid color-mix(in srgb,var(--info) 25%,transparent);color:var(--info);border-radius:var(--r-sm);padding:10px 12px;font-size:12.5px;line-height:1.4;text-transform:none;letter-spacing:0;font-weight:600}
 .bill-sub{color:var(--muted);font-size:11.5px;margin-top:3px}
+.person-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.person-card{background:var(--card2);border:1px solid var(--line);border-radius:var(--r-sm);padding:14px;display:grid;gap:7px;min-height:116px}
+.person-card .label{color:var(--muted);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.07em}
+.person-card .value{font-family:Georgia,"Times New Roman",serif;font-size:27px;font-weight:800;line-height:1;letter-spacing:-.02em}
+.person-card .sub{color:var(--muted);font-size:12px;line-height:1.35}
+.person-card.tj{border-color:color-mix(in srgb,var(--info) 30%,var(--line));background:color-mix(in srgb,var(--info-soft) 58%,var(--card))}
+.person-card.ek{border-color:color-mix(in srgb,var(--ok) 30%,var(--line));background:color-mix(in srgb,var(--ok-soft) 58%,var(--card))}
+.person-card.settle-due{border-color:color-mix(in srgb,var(--clay) 36%,var(--line));background:color-mix(in srgb,var(--clay-soft) 58%,var(--card))}
+.person-card .value.pos{color:var(--ok)} .person-card .value.neg{color:var(--bad)}
+.person-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.person-mini-table{display:grid;gap:8px}
+.person-mini-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line)}
+.person-mini-row:last-child{border-bottom:0}
+.person-mini-row .name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;min-width:0}
+.person-mini-row .name span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.person-mini-row .amt{font-size:12.5px}
+.net-pos{color:var(--ok);font-weight:700}.net-neg{color:var(--bad);font-weight:700}
 
 /* next actions */
 .next-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:11px}
@@ -378,13 +402,14 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
 @media (max-width:1080px){
   .hero{grid-template-columns:1fr}
   .kpis{grid-template-columns:repeat(3,1fr)}
-  .grid-2,.grid-2b,.set-grid{grid-template-columns:1fr}
+  .grid-2,.grid-2b,.set-grid,.person-grid{grid-template-columns:1fr}
   .next-grid,.rings,.dist-grid{grid-template-columns:1fr}
   .command-row{grid-template-columns:1fr}
 }
 @media (max-width:640px){
   .shell{width:calc(100% - 20px);padding-top:18px}
   .kpis{grid-template-columns:repeat(2,1fr)}
+  .person-summary{grid-template-columns:1fr}
   .item{grid-template-columns:1fr;gap:11px}
   .item .side{justify-items:start}
   .bar-row{grid-template-columns:1fr;gap:5px}
@@ -418,8 +443,10 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
       <button class="btn ghost" id="printBtn">Print</button>
       <button class="btn ghost" id="exportBtn">Export</button>
       <label class="btn ghost file-btn">Import<input id="importInput" type="file" accept="application/json"></label>
-      <button class="btn ghost" id="cloudPushBtn" title="Push local data to the cloud">↑ Cloud</button>
-      <button class="btn ghost" id="cloudPullBtn" title="Pull data from the cloud">↓ Cloud</button>
+      <button class="btn cloud-pull" id="cloudPullBtn" title="Pull full cloud data into this browser"></button>
+      <button class="btn cloud-merge" id="cloudMergeBtn" title="Merge cloud expenses into this browser"></button>
+      <button class="btn cloud-push" id="cloudPushBtn" title="Push local data to Firebase"></button>
+      <button class="btn cloud-setup" id="cloudSetupBtn" title="Configure Firebase sync"></button>
       <button class="btn danger" id="resetBtn">Reset</button>
     </div>
   </header>
@@ -448,6 +475,7 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
   <section class="pane" id="pane-stays"></section>
   <section class="pane" id="pane-checklist"></section>
   <section class="pane" id="pane-expenses"></section>
+  <section class="pane" id="pane-person"></section>
   <section class="pane" id="pane-plan"></section>
   <section class="pane" id="pane-fuel"></section>
   
@@ -516,6 +544,7 @@ const ICONS = {
   bed: 'M3 7v11M3 13h18v5M21 13v-2a3 3 0 0 0-3-3H8M3 11V7',
   check: 'M20 6 9 17l-5-5',
   wallet: 'M19 7H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2zM16 13h.01M3 9V7a2 2 0 0 1 2-2h11',
+  users: 'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.9M16 3.1a4 4 0 0 1 0 7.8',
   calc: 'M4 3h16v18H4zM8 7h8M8 11h2M14 11h2M8 15h2M14 15h2M8 19h8',
   fork: 'M4 3v7a2 2 0 0 0 2 2h0a2 2 0 0 0 2-2V3M6 12v9M15 3c-1.5 1-2 3-2 5s.5 4 2 5v8',
   db: 'M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6',
@@ -530,6 +559,7 @@ const ICONS = {
   download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
   upload: 'M12 21V9M7 14l5-5 5 5M5 3h14',
   reset: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
+  settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2 3.4-.2-.1a1.8 1.8 0 0 0-2 .4l-.2.2-3.8-2.2-.1-.4a1.8 1.8 0 0 0-1.6-1.1h-.3L7.8 21l-.2-.1-2-3.4.1-.1a1.8 1.8 0 0 0 .4-2l-.1-.3H2v-4h4l.1-.3a1.8 1.8 0 0 0-.4-2l-.1-.1 2-3.4.2-.1 1.9 3.3h.3a1.8 1.8 0 0 0 1.6-1.1l.1-.4L15.5 3l.2.2a1.8 1.8 0 0 0 2 .4l.2-.1 2 3.4-.1.1a1.8 1.8 0 0 0-.4 2l.1.3H22v4h-2.5z',
   printer: 'M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M6 14h12v7H6z',
   search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14zM21 21l-4.3-4.3',
   sun: 'M12 4V2M12 22v-2M4 12H2M22 12h-2M6 6 4.5 4.5M19.5 19.5 18 18M18 6l1.5-1.5M4.5 19.5 6 18M12 17a5 5 0 1 0 0-10 5 5 0 0 0 0 10z',
@@ -594,6 +624,7 @@ const TABS = [
   ["stays","Stays","bed"],
   ["checklist","Checklist","check"],
   ["expenses","Expenses","wallet"],
+  ["person","By Person","users"],
   ["plan","Cost Plan","calc"],
   ["fuel","Fuel Log","fuel"]
 ];
@@ -742,8 +773,14 @@ function bindEvents(){
   $("printBtn").addEventListener("click", ()=>window.print());
   $("exportBtn").addEventListener("click", exportDb);
   $("importInput").addEventListener("change", importDb);
-  $("cloudPushBtn").addEventListener("click", cloudPush);
-  $("cloudPullBtn").addEventListener("click", cloudPull);
+  $("cloudPullBtn").innerHTML = `${icon("download")} Pull`;
+  $("cloudMergeBtn").innerHTML = `${icon("reset")} Merge`;
+  $("cloudPushBtn").innerHTML = `${icon("upload")} Push`;
+  $("cloudSetupBtn").innerHTML = `${icon("settings")} Setup`;
+  $("cloudPullBtn").addEventListener("click", cloudPullQuick);
+  $("cloudMergeBtn").addEventListener("click", cloudMergeExpensesQuick);
+  $("cloudPushBtn").addEventListener("click", cloudPushQuick);
+  $("cloudSetupBtn").addEventListener("click", cloudSetupQuick);
   $("resetBtn").addEventListener("click", resetSeed);
   $("editForm").addEventListener("submit", saveEditor);
   $("closeBtn").addEventListener("click", ()=>$("dialog").close());
@@ -770,7 +807,9 @@ function delegate(e){
   else if (act==="add-trip-stop"){ const r=defaultRecord("trip"); r.overnight=a.dataset.label||""; openEditor("trip"); }
   else if (act==="quickDeleteExpense") quickDeleteExpense(a.dataset.id);
   else if (act==="cloudPush") cloudPushQuick();
+  else if (act==="cloudPull") cloudPullQuick();
   else if (act==="cloudMergeExpenses") cloudMergeExpensesQuick();
+  else if (act==="cloudSetup") cloudSetupQuick();
 }
 
 /* ============================================================
@@ -779,12 +818,12 @@ function delegate(e){
 function renderAll(){
   ensureFilters();
   const steps = [renderHero,renderKpis,renderBadges,renderDashboard,renderItinerary,renderMap,
-    renderStays,renderChecklist,renderExpenses,renderPlan,renderFuelLog];
+    renderStays,renderChecklist,renderExpenses,renderPersonExpenses,renderPlan,renderFuelLog];
   steps.forEach(fn=>{ try { fn(); } catch(err){ console.error(fn.name, err); } });
 }
 /* lighter path on filter changes */
 function renderFiltered(){
-  renderDashboard(); renderItinerary(); renderStays(); renderChecklist(); renderExpenses(); renderFuelLog();
+  renderDashboard(); renderItinerary(); renderStays(); renderChecklist(); renderExpenses(); renderPersonExpenses(); renderFuelLog();
 }
 function ensureFilters(){
   if ($("statusFilter").dataset.ready) return;
@@ -794,7 +833,7 @@ function ensureFilters(){
 }
 function renderBadges(){
   const counts = { dashboard:"", itinerary:db.tripPlans.length, map:MAP_STOPS.length, stays:db.accommodations.length,
-    checklist:db.checklist.filter(t=>!isDone(t)).length, expenses:db.expenses.length, plan:db.categoryDetails.length,
+    checklist:db.checklist.filter(t=>!isDone(t)).length, expenses:db.expenses.length, person:db.expenses.length, plan:db.categoryDetails.length,
     fuel:db.fuelLog.length };
   document.querySelectorAll("[data-badge]").forEach(b=>{ const v=counts[b.dataset.badge]; b.textContent = v||v===0?String(v):""; b.style.display = v||v===0?"":"none"; });
 }
@@ -1378,8 +1417,6 @@ function renderExpenses(){
     <div class="panel">
       <div class="sec-head"><h2 class="serif">${icon("wallet")} Expense ledger</h2>
         <div class="right"><span class="meta">${rows.length}/${db.expenses.length} shown · total ${fmt.format(t.actual)}</span>
-          <button class="btn ghost" data-act="cloudMergeExpenses">${icon("reset")} Merge cloud</button>
-          <button class="btn ghost" data-act="cloudPush">${icon("upload")} Push cloud</button>
           <button class="btn primary" data-act="add" data-type="expense">${icon("plus")} Add expense</button></div></div>
       <div class="table-wrap"><table>
         <thead><tr>${th("Date","date","exp")}${th("Category","category","exp")}${th("Description","description","exp")}
@@ -1398,6 +1435,106 @@ function billSub(e){
   if(!isBillSplit(e)) return "";
   const shares = expenseShares(e);
   return `<div class="bill-sub">${escapeHtml(e.billSplitMode)} · TJ ${fmt.format(shares.tj)} · EK ${fmt.format(shares.ek)}</div>`;
+}
+
+function expenseDissectionRows(){
+  return applyFilter(db.expenses, "expense").map(e=>{
+    const amount = expenseTotal(e);
+    const share = expenseShares(e);
+    const tjPaid = e.payer === "TJ" ? amount : 0;
+    const ekPaid = e.payer === "EK" ? amount : 0;
+    return {
+      ...e,
+      amount,
+      tjShare: share.tj,
+      ekShare: share.ek,
+      tjPaid,
+      ekPaid,
+      tjNet: tjPaid - share.tj,
+      ekNet: ekPaid - share.ek
+    };
+  });
+}
+function sortPersonRows(rows){
+  const s = sortState.personExp;
+  if(!s) return rows.slice().sort((a,b)=>String(a.date||"").localeCompare(String(b.date||"")));
+  const copy = rows.slice();
+  copy.sort((a,b)=>{
+    const numericKeys = new Set(["amount","tjPaid","ekPaid","tjShare","ekShare","tjNet","ekNet"]);
+    const av = a[s.key], bv = b[s.key];
+    if(s.numeric || numericKeys.has(s.key)) return (num(av)-num(bv))*s.dir;
+    return String(av??"").localeCompare(String(bv??""), undefined, {numeric:true}) * s.dir;
+  });
+  return copy;
+}
+function byCategory(rows, person){
+  const field = person === "TJ" ? "tjShare" : "ekShare";
+  const out = {};
+  rows.forEach(r=>{ if(r[field]) out[r.category||"Other"] = (out[r.category||"Other"]||0) + r[field]; });
+  return Object.entries(out).sort((a,b)=>b[1]-a[1]);
+}
+function categoryMini(title, person, rows){
+  const cats = byCategory(rows, person);
+  const body = cats.length ? cats.map(([cat, amount])=>`
+    <div class="person-mini-row">
+      <div class="name"><span class="sw" style="width:9px;height:9px;border-radius:3px;background:${COLORMAP[cat]||"var(--muted)"}"></span><span>${escapeHtml(cat)}</span></div>
+      <div class="amt">${fmt.format(Math.round(amount))}</div>
+    </div>`).join("") : empty("No allocated expenses yet.","wallet");
+  return `<div class="panel">
+    <div class="sec-head"><h2 class="serif">${icon("wallet")} ${title}</h2><span class="meta">fair share by category</span></div>
+    <div class="person-mini-table">${body}</div>
+  </div>`;
+}
+function netText(value){
+  const rounded = Math.round(value);
+  if(Math.abs(rounded) < 500) return `<span class="mono">—</span>`;
+  const cls = rounded > 0 ? "net-pos" : "net-neg";
+  const sign = rounded > 0 ? "+" : "-";
+  return `<span class="${cls} mono">${sign}${fmt.format(Math.abs(rounded))}</span>`;
+}
+function renderPersonExpenses(){
+  const rawRows = expenseDissectionRows();
+  const rows = sortPersonRows(rawRows);
+  const t = totals();
+  const settlement = Math.abs(t.tjNet) < 500
+    ? { label:"Settled", value:"No transfer", sub:"TJ and EK are balanced" }
+    : t.tjNet > 0
+      ? { label:"Settle", value:`EK -> TJ`, sub:fmt.format(Math.round(t.tjNet)) }
+      : { label:"Settle", value:`TJ -> EK`, sub:fmt.format(Math.round(Math.abs(t.tjNet))) };
+  const body = rows.length ? rows.map(r=>`<tr>
+    <td>${dateText(r.date)}</td>
+    <td><div class="lead2">${escapeHtml(r.description||"—")}</div><div class="sub">${escapeHtml(r.category||"Other")} · ${escapeHtml(r.place||r.vendor||"")}</div>${billSub(r)}</td>
+    <td>${payerPill(r.payer)}</td>
+    <td class="num">${fmt.format(Math.round(r.amount))}</td>
+    <td class="num">${fmt.format(Math.round(r.tjShare))}</td>
+    <td class="num">${fmt.format(Math.round(r.ekShare))}</td>
+    <td class="num">${netText(r.tjNet)}</td>
+    <td class="num">${netText(r.ekNet)}</td>
+    <td><button class="linkbtn" data-act="edit" data-type="expense" data-id="${r.id}">Edit</button></td>
+  </tr>`).join("") : `<tr><td colspan="9">${empty("No expenses match.","users")}</td></tr>`;
+  $("pane-person").innerHTML = `
+    <div class="person-summary">
+      <div class="person-card tj"><div class="label">TJ paid</div><div class="value">${fmt.format(Math.round(t.tjPaid))}</div><div class="sub">Fair share ${fmt.format(Math.round(t.tjOwes))}</div></div>
+      <div class="person-card ek"><div class="label">EK paid</div><div class="value">${fmt.format(Math.round(t.ekPaid))}</div><div class="sub">Fair share ${fmt.format(Math.round(t.ekOwes))}</div></div>
+      <div class="person-card"><div class="label">TJ net</div><div class="value ${t.tjNet>=0?"pos":"neg"}">${t.tjNet>=0?"+":"-"}${fmt.format(Math.round(Math.abs(t.tjNet)))}</div><div class="sub">positive means overpaid</div></div>
+      <div class="person-card settle-due"><div class="label">${settlement.label}</div><div class="value">${escapeHtml(settlement.value)}</div><div class="sub">${escapeHtml(settlement.sub)}</div></div>
+    </div>
+    <div class="person-grid">
+      ${categoryMini("TJ detail", "TJ", rawRows)}
+      ${categoryMini("EK detail", "EK", rawRows)}
+    </div>
+    <div class="panel">
+      <div class="sec-head"><h2 class="serif">${icon("users")} Expense dissection</h2>
+        <div class="right"><span class="meta">${rows.length}/${db.expenses.length} rows · ${fmt.format(Math.round(t.actual))} total</span>
+          <button class="btn primary" data-act="add" data-type="expense">${icon("plus")} Add expense</button></div></div>
+      <div class="table-wrap"><table>
+        <thead><tr>${th("Date","date","personExp")}${th("Expense","description","personExp")}${th("Paid by","payer","personExp")}
+          ${th("Total","amount","personExp",true)}${th("TJ share","tjShare","personExp",true)}${th("EK share","ekShare","personExp",true)}
+          ${th("TJ net","tjNet","personExp",true)}${th("EK net","ekNet","personExp",true)}<th></th></tr></thead>
+        <tbody>${body}</tbody>
+        <tfoot><tr><td colspan="3">Totals</td><td class="num">${fmt.format(Math.round(t.actual))}</td><td class="num">${fmt.format(Math.round(t.tjOwes))}</td><td class="num">${fmt.format(Math.round(t.ekOwes))}</td><td class="num">${netText(t.tjNet)}</td><td class="num">${netText(-t.tjNet)}</td><td></td></tr></tfoot>
+      </table></div>
+    </div>`;
 }
 
 /* ============================================================
@@ -1775,12 +1912,22 @@ function quickDeleteExpense(id){
   }
 }
 function cloudPushQuick(){
-  if(!window.RTBALICloud?.pushDb) return toast("Cloud setup needed");
-  window.RTBALICloud.pushDb().catch(err=>toast(`Push failed: ${err.message}`));
+  if(window.RTBALICloud?.pushDb) return window.RTBALICloud.pushDb().catch(err=>toast(`Push failed: ${err.message}`));
+  cloudPush();
+}
+function cloudPullQuick(){
+  if(window.RTBALICloud?.pullDb) return window.RTBALICloud.pullDb().catch(err=>toast(`Pull failed: ${err.message}`));
+  cloudPull();
 }
 function cloudMergeExpensesQuick(){
-  if(!window.RTBALICloud?.mergeExpenses) return toast("Cloud setup needed");
-  window.RTBALICloud.mergeExpenses().catch(err=>toast(`Merge failed: ${err.message}`));
+  if(window.RTBALICloud?.mergeExpenses) return window.RTBALICloud.mergeExpenses().catch(err=>toast(`Merge failed: ${err.message}`));
+  toast("Cloud setup needed");
+}
+function cloudSetupQuick(){
+  if(window.RTBALICloud?.setup) return window.RTBALICloud.setup();
+  ensureCloudConfig();
+  setSyncPill("Cloud setup saved", false);
+  toast("Cloud setup saved");
 }
 function cycleTask(id){
   const t = db.checklist.find(x=>x.id===id); if(!t) return;

@@ -102,8 +102,11 @@
   }
 
   function status(text) {
-    const el = document.getElementById("firebaseSyncState");
-    if (el) el.textContent = text;
+    const el = document.getElementById("firebaseSyncState") || document.getElementById("syncState");
+    if (el) {
+      el.classList.toggle("dirty", /failed|needed|not set|pushing|pulling|merging|running/i.test(text));
+      el.innerHTML = `<span class="led"></span> ${text}`;
+    }
   }
 
   async function request(config, path, options = {}) {
@@ -212,15 +215,7 @@
   function installControls(config) {
     const topActions = document.querySelector("header .top-actions");
     if (!topActions) return;
-
-    const wrap = document.createElement("span");
-    wrap.className = "sync-pill";
-    wrap.id = "firebaseSyncState";
-    wrap.textContent = "Firebase ready";
-    topActions.insertBefore(wrap, topActions.firstChild);
-
-    topActions.appendChild(button("Pull cloud", "btn ghost", () => pullDb(config).catch((err) => status(err.message))));
-    topActions.appendChild(button("Merge expenses", "btn ghost", () => mergeExpenses(config).catch((err) => status(err.message))));
+    const hasStaticCloudControls = Boolean(document.getElementById("cloudPushBtn"));
     const file = document.createElement("input");
     file.type = "file";
     file.accept = "image/*";
@@ -232,31 +227,49 @@
       file.value = "";
     });
     topActions.appendChild(file);
-    topActions.appendChild(button("OCR receipt", "btn ghost", () => file.click()));
-    topActions.appendChild(button("Push cloud", "btn ghost", () => pushDb(config).catch((err) => status(err.message))));
-    topActions.appendChild(button("Cloud setup", "btn ghost", () => {
-      const next = promptConfig(config);
-      if (!next) return;
-      saveLocalConfig(next);
-      window.location.reload();
-    }));
-    topActions.appendChild(button("Copy setup link", "btn ghost", async () => {
-      const link = setupLink(config);
-      try {
-        await navigator.clipboard.writeText(link);
-        status("Setup link copied");
-      } catch (_) {
-        prompt("Copy setup link", link);
+    if (!hasStaticCloudControls) {
+      if (!document.getElementById("syncState")) {
+        const wrap = document.createElement("span");
+        wrap.className = "sync-pill";
+        wrap.id = "firebaseSyncState";
+        wrap.innerHTML = '<span class="led"></span> Firebase ready';
+        topActions.insertBefore(wrap, topActions.firstChild);
       }
-    }));
-
+      topActions.appendChild(button("Pull", "btn ghost cloud-pull", () => pullDb(config).catch((err) => status(err.message))));
+      topActions.appendChild(button("Merge", "btn ghost cloud-merge", () => mergeExpenses(config).catch((err) => status(err.message))));
+      topActions.appendChild(button("OCR", "btn ghost", () => file.click()));
+      topActions.appendChild(button("Push", "btn ghost cloud-push", () => pushDb(config).catch((err) => status(err.message))));
+      topActions.appendChild(button("Setup", "btn ghost cloud-setup", () => {
+        const next = promptConfig(config);
+        if (!next) return;
+        saveLocalConfig(next);
+        window.location.reload();
+      }));
+    }
     window.RTBALICloud = {
       pushDb: () => pushDb(config),
       pullDb: () => pullDb(config),
       mergeExpenses: () => mergeExpenses(config),
-      deleteExpense: (expenseId) => deleteExpense(config, expenseId)
+      deleteExpense: (expenseId) => deleteExpense(config, expenseId),
+      ocrReceipt: () => file.click(),
+      setup: () => {
+        const next = promptConfig(config);
+        if (!next) return;
+        saveLocalConfig(next);
+        window.location.reload();
+      },
+      copySetupLink: async () => {
+        const link = setupLink(config);
+        try {
+          await navigator.clipboard.writeText(link);
+          status("Setup link copied");
+        } catch (_) {
+          prompt("Copy setup link", link);
+        }
+      }
     };
 
+    status("Firebase ready");
     if (window.RTBALI?.toast) window.RTBALI.toast("Cloud quick actions ready");
 
     // Pull full DB on startup so the app always opens with the latest cloud data
@@ -271,19 +284,27 @@
   function installSetupOnly() {
     const topActions = document.querySelector("header .top-actions");
     if (!topActions) return;
+    const hasStaticCloudControls = Boolean(document.getElementById("cloudSetupBtn"));
 
-    const wrap = document.createElement("span");
-    wrap.className = "sync-pill";
-    wrap.id = "firebaseSyncState";
-    wrap.textContent = "Cloud not set";
-    topActions.insertBefore(wrap, topActions.firstChild);
-
-    topActions.appendChild(button("Cloud setup", "btn ghost", () => {
-      const config = promptConfig();
-      if (!config) return;
-      saveLocalConfig(config);
-      window.location.reload();
-    }));
+    status("Cloud not set");
+    window.RTBALICloud = {
+      setup: () => {
+        const config = promptConfig();
+        if (!config) return;
+        saveLocalConfig(config);
+        window.location.reload();
+      }
+    };
+    if (!hasStaticCloudControls) {
+      if (!document.getElementById("syncState")) {
+        const wrap = document.createElement("span");
+        wrap.className = "sync-pill";
+        wrap.id = "firebaseSyncState";
+        wrap.innerHTML = '<span class="led"></span> Cloud not set';
+        topActions.insertBefore(wrap, topActions.firstChild);
+      }
+      topActions.appendChild(button("Setup", "btn ghost cloud-setup", () => window.RTBALICloud.setup()));
+    }
   }
 
   ready(async () => {

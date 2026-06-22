@@ -37,6 +37,7 @@ const ALLOWED_ORIGINS = (process.env.RTBALI_ALLOWED_ORIGINS || "*")
 
 // Minimum gap between OCR/photo requests per chat, to cap Google Vision spend.
 const OCR_MIN_INTERVAL_MS = Number(process.env.RTBALI_OCR_MIN_INTERVAL_MS || 3000);
+const DB_JSON_CHUNK_SIZE = 700000;
 
 const CATEGORY_ALIASES = {
   meal: "Food & Drinks",
@@ -107,16 +108,87 @@ async function allowOcr(tripId, chatId) {
   }
 }
 
-// The web app's full database is stored as a JSON string (dbJson) rather than a
-// nested map — Firestore rejects documents deeper than 20 levels, and the web
-// db can nest past that. Reads tolerate both the new string and the legacy
-// `db` map written by older deploys.
+function parseJsonObject(json) {
+  try { return JSON.parse(json) || {}; } catch (_) { return {}; }
+}
+
+function splitJsonChunks(json, size = DB_JSON_CHUNK_SIZE) {
+  const text = String(json || "");
+  const chunkSize = Math.max(1, Number(size) || DB_JSON_CHUNK_SIZE);
+  const chunks = [];
+  let chunk = "";
+  let bytes = 0;
+  for (const char of text) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (chunk && bytes + charBytes > chunkSize) {
+      chunks.push(chunk);
+      chunk = "";
+      bytes = 0;
+    }
+    chunk += char;
+    bytes += charBytes;
+  }
+  if (chunk) chunks.push(chunk);
+  return chunks.length ? chunks : [""];
+}
+
+function joinJsonChunks(chunks) {
+  return (chunks || [])
+    .slice()
+    .sort((a, b) => Number(a.index || 0) - Number(b.index || 0))
+    .map((chunk) => chunk.text || "")
+    .join("");
+}
+
+// The web app's full database used to be stored as a JSON string (dbJson)
+// rather than a nested map — Firestore rejects documents deeper than 20 levels,
+// and the web db can nest past that. New writes use dbChunks documents so the
+// JSON can grow past Firestore's per-field limit. Reads tolerate the chunked
+// format, the old string, and the legacy `db` map written by older deploys.
 function tripDbBlob(tripData) {
   if (!tripData) return {};
   if (typeof tripData.dbJson === "string") {
-    try { return JSON.parse(tripData.dbJson) || {}; } catch (_) { return {}; }
+    return parseJsonObject(tripData.dbJson);
   }
   return tripData.db || {};
+}
+
+async function readTripDbBlob(tripId, tripData) {
+  if (tripData?.dbJsonChunked) {
+    const snap = await tripRef(tripId).collection("dbChunks").orderBy(admin.firestore.FieldPath.documentId()).get();
+    if (!snap.empty) {
+      return parseJsonObject(joinJsonChunks(snap.docs.map((doc) => doc.data())));
+    }
+  }
+  return tripDbBlob(tripData);
+}
+
+async function writeTripDbBlob(tripId, dbMeta) {
+  const json = JSON.stringify(dbMeta || {});
+  const chunks = splitJsonChunks(json);
+  const ref = tripRef(tripId);
+  const chunkCol = ref.collection("dbChunks");
+  const existingChunks = await chunkCol.get();
+  const batch = db.batch();
+  batch.set(ref, {
+    dbJson: admin.firestore.FieldValue.delete(),
+    db: admin.firestore.FieldValue.delete(),
+    dbJsonChunked: true,
+    dbJsonChunkCount: chunks.length,
+    dbJsonBytes: Buffer.byteLength(json, "utf8"),
+    updatedAt: nowField(),
+    createdAt: nowField()
+  }, { merge: true });
+  existingChunks.docs.forEach((doc) => batch.delete(doc.ref));
+  chunks.forEach((text, index) => {
+    batch.set(chunkCol.doc(`part-${String(index).padStart(4, "0")}`), {
+      index,
+      total: chunks.length,
+      text,
+      updatedAt: nowField()
+    });
+  });
+  await batch.commit();
 }
 
 function rupiah(value) {
@@ -1865,13 +1937,14 @@ async function exportDb(tripId) {
     tripRef(tripId).collection("members").get(),
     tripRef(tripId).collection("receipts").orderBy("createdAt", "desc").limit(200).get()
   ]);
+  const tripData = trip.data();
   const expenses = expenseDocs
     .map((doc) => ({ id: doc.id, ...toPlain(doc.data()) }))
     .sort((a, b) => createdAtMillis(b) - createdAtMillis(a));
   return {
-    ...toPlain(tripDbBlob(trip.data())),
+    ...toPlain(await readTripDbBlob(tripId, tripData)),
     firebase: {
-      trip: toPlain(trip.data() || {}),
+      trip: toPlain(tripData || {}),
       members: members.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) })),
       receipts: receipts.docs.map((doc) => ({ id: doc.id, ...toPlain(doc.data()) }))
     },
@@ -1956,16 +2029,11 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
         await tripRef(tripId).collection("backups").doc(`import-${Date.now()}`).set(backupDoc);
       }
 
-      // Store the web db as a JSON string (immune to Firestore's 20-level depth
-      // limit) and drop the legacy nested `db` map. Expenses are excluded — they
-      // live in the expenses subcollection and would otherwise double the doc
-      // size and risk the 1 MiB limit.
+      // Store the web db in chunk docs: this avoids both Firestore's nested-map
+      // depth limit and its per-field/document size limits. Expenses are excluded
+      // because they live in the expenses subcollection.
       const { expenses: _omitExpenses, ...dbMeta } = importedDb;
-      await tripRef(tripId).set({
-        dbJson: JSON.stringify(dbMeta),
-        db: admin.firestore.FieldValue.delete(),
-        updatedAt: nowField(), createdAt: nowField()
-      }, { merge: true });
+      await writeTripDbBlob(tripId, dbMeta);
       const batch = db.batch();
       const importedExpenseIds = new Set();
       const skippedExpenses = [];
@@ -2038,5 +2106,6 @@ exports.api = onRequest({ region: "asia-southeast2", timeoutSeconds: 60, memory:
 // Exposed for unit tests (node --test). Pure functions only — no side effects.
 module.exports._internal = {
   num, splitUnits, shares, calcFromBillItems, expenseTotal,
-  parseOcrLineItems, parseExpenseText, normalizeMemberName, STATE, ASSIGN
+  parseOcrLineItems, parseExpenseText, normalizeMemberName, STATE, ASSIGN,
+  splitJsonChunks, joinJsonChunks, parseJsonObject
 };
