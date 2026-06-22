@@ -227,24 +227,12 @@
       file.value = "";
     });
     topActions.appendChild(file);
-    if (!hasStaticCloudControls) {
-      if (!document.getElementById("syncState")) {
-        const wrap = document.createElement("span");
-        wrap.className = "sync-pill";
-        wrap.id = "firebaseSyncState";
-        wrap.innerHTML = '<span class="led"></span> Firebase ready';
-        topActions.insertBefore(wrap, topActions.firstChild);
-      }
-      topActions.appendChild(button("Pull", "btn ghost cloud-pull", () => pullDb(config).catch((err) => status(err.message))));
-      topActions.appendChild(button("Merge", "btn ghost cloud-merge", () => mergeExpenses(config).catch((err) => status(err.message))));
-      topActions.appendChild(button("OCR", "btn ghost", () => file.click()));
-      topActions.appendChild(button("Push", "btn ghost cloud-push", () => pushDb(config).catch((err) => status(err.message))));
-      topActions.appendChild(button("Setup", "btn ghost cloud-setup", () => {
-        const next = promptConfig(config);
-        if (!next) return;
-        saveLocalConfig(next);
-        window.location.reload();
-      }));
+    if (!hasStaticCloudControls && !document.getElementById("syncState")) {
+      const wrap = document.createElement("span");
+      wrap.className = "sync-pill";
+      wrap.id = "firebaseSyncState";
+      wrap.innerHTML = '<span class="led"></span> Firebase ready';
+      topActions.insertBefore(wrap, topActions.firstChild);
     }
     window.RTBALICloud = {
       pushDb: () => pushDb(config),
