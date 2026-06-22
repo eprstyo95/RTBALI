@@ -1,4 +1,4 @@
-const CACHE_NAME = "rtbali-offline-v8";
+const CACHE_NAME = "rtbali-offline-v9";
 const APP_SHELL = [
   "./",
   "./index.html",

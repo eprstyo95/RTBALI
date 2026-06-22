@@ -238,6 +238,15 @@ select{appearance:none;background-image:url("data:image/svg+xml;utf8,<svg xmlns=
 .person-mini-row .name{display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;min-width:0}
 .person-mini-row .name span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .person-mini-row .amt{font-size:12.5px}
+.person-copy-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px}
+.person-copy-card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow-sm);padding:15px;display:grid;gap:12px}
+.person-copy-card.tj{border-color:color-mix(in srgb,var(--info) 30%,var(--line))}
+.person-copy-card.ek{border-color:color-mix(in srgb,var(--ok) 30%,var(--line))}
+.person-copy-head{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.person-copy-head h3{font-family:Georgia,"Times New Roman",serif;font-size:18px;font-weight:700;display:flex;align-items:center;gap:8px}
+.person-copy-head .meta{color:var(--muted);font-size:12px;font-weight:600}
+.person-copy-text{width:100%;min-height:320px;max-height:480px;resize:vertical;border:1px solid var(--line2);border-radius:var(--r-sm);background:var(--paper2);color:var(--ink);padding:12px;font-family:"SFMono-Regular",ui-monospace,Menlo,monospace;font-size:12px;line-height:1.55;white-space:pre;overflow:auto}
+.person-copy-foot{display:flex;justify-content:space-between;gap:10px;align-items:center;color:var(--muted);font-size:12px;flex-wrap:wrap}
 .net-pos{color:var(--ok);font-weight:700}.net-neg{color:var(--bad);font-weight:700}
 
 /* next actions */
@@ -402,7 +411,7 @@ dialog::backdrop{background:rgba(15,20,26,.55);backdrop-filter:blur(5px)}
 @media (max-width:1080px){
   .hero{grid-template-columns:1fr}
   .kpis{grid-template-columns:repeat(3,1fr)}
-  .grid-2,.grid-2b,.set-grid,.person-grid{grid-template-columns:1fr}
+  .grid-2,.grid-2b,.set-grid,.person-grid,.person-copy-grid{grid-template-columns:1fr}
   .next-grid,.rings,.dist-grid{grid-template-columns:1fr}
   .command-row{grid-template-columns:1fr}
 }
@@ -558,6 +567,7 @@ const ICONS = {
   coins: 'M9 14a6 6 0 1 0 0-12 6 6 0 0 0 0 12zM15 22a6 6 0 0 0 0-12M6 9h6',
   download: 'M12 3v12M7 10l5 5 5-5M5 21h14',
   upload: 'M12 21V9M7 14l5-5 5 5M5 3h14',
+  copy: 'M8 8h11v13H8zM5 16H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h11a1 1 0 0 1 1 1v1',
   reset: 'M3 12a9 9 0 1 0 3-6.7L3 8M3 3v5h5',
   settings: 'M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM19.4 15a1.8 1.8 0 0 0 .4 2l.1.1-2 3.4-.2-.1a1.8 1.8 0 0 0-2 .4l-.2.2-3.8-2.2-.1-.4a1.8 1.8 0 0 0-1.6-1.1h-.3L7.8 21l-.2-.1-2-3.4.1-.1a1.8 1.8 0 0 0 .4-2l-.1-.3H2v-4h4l.1-.3a1.8 1.8 0 0 0-.4-2l-.1-.1 2-3.4.2-.1 1.9 3.3h.3a1.8 1.8 0 0 0 1.6-1.1l.1-.4L15.5 3l.2.2a1.8 1.8 0 0 0 2 .4l.2-.1 2 3.4-.1.1a1.8 1.8 0 0 0-.4 2l.1.3H22v4h-2.5z',
   printer: 'M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-2M6 14h12v7H6z',
@@ -810,6 +820,7 @@ function delegate(e){
   else if (act==="cloudPull") cloudPullQuick();
   else if (act==="cloudMergeExpenses") cloudMergeExpensesQuick();
   else if (act==="cloudSetup") cloudSetupQuick();
+  else if (act==="copyPerson") copyPersonColumn(a.dataset.person);
 }
 
 /* ============================================================
@@ -1485,6 +1496,57 @@ function categoryMini(title, person, rows){
     <div class="person-mini-table">${body}</div>
   </div>`;
 }
+function personAmount(row, person){
+  return person === "TJ" ? row.tjShare : row.ekShare;
+}
+function personPaid(row, person){
+  return row.payer === person ? row.amount : 0;
+}
+function personNet(row, person){
+  return personPaid(row, person) - personAmount(row, person);
+}
+function personCopyLines(person, rows, totalsData){
+  const amountField = person === "TJ" ? "tjOwes" : "ekOwes";
+  const paidField = person === "TJ" ? "tjPaid" : "ekPaid";
+  const net = person === "TJ" ? totalsData.tjNet : -totalsData.tjNet;
+  const details = rows
+    .filter((row) => Math.round(personAmount(row, person)) !== 0 || row.payer === person)
+    .sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""), undefined, {numeric:true}))
+    .map((row, idx) => {
+      const place = clean(row.place || row.vendor);
+      const split = clean(row.billSplitMode && row.billSplitMode !== "Off" ? row.billSplitMode : row.split);
+      const notes = clean(row.notes);
+      return [
+        `${idx + 1}. ${row.date || "No date"} - ${row.category || "Other"}`,
+        `   ${row.description || "Untitled expense"}${place ? ` @ ${place}` : ""}`,
+        `   Total: ${fmt.format(Math.round(row.amount))} | Paid by: ${row.payer || "TBD"} | Split: ${split || "—"}`,
+        `   ${person} share: ${fmt.format(Math.round(personAmount(row, person)))} | ${person} paid: ${fmt.format(Math.round(personPaid(row, person)))} | Net: ${fmt.format(Math.round(personNet(row, person)))}`,
+        notes ? `   Notes: ${notes}` : ""
+      ].filter(Boolean).join("\n");
+    });
+  const header = [
+    `RTBALI ${person} expense detail`,
+    `Rows: ${details.length}`,
+    `Paid by ${person}: ${fmt.format(Math.round(totalsData[paidField]))}`,
+    `${person} fair share: ${fmt.format(Math.round(totalsData[amountField]))}`,
+    `${person} net: ${net >= 0 ? "overpaid " : "owes "}${fmt.format(Math.round(Math.abs(net)))}`,
+    ""
+  ];
+  return `${header.join("\n")}${details.length ? `\n${details.join("\n\n")}` : ""}`;
+}
+function personCopyCard(person, rows, totalsData){
+  const text = personCopyLines(person, rows, totalsData);
+  const count = rows.filter((row) => Math.round(personAmount(row, person)) !== 0 || row.payer === person).length;
+  const share = person === "TJ" ? totalsData.tjOwes : totalsData.ekOwes;
+  return `<div class="person-copy-card ${person.toLowerCase()}">
+    <div class="person-copy-head">
+      <div><h3>${icon("users")} ${person} copy column</h3><div class="meta">${count} expense rows · ${fmt.format(Math.round(share))} fair share</div></div>
+      <button class="btn ${person==="TJ"?"cloud-pull":"cloud-merge"}" data-act="copyPerson" data-person="${person}">${icon("copy")} Copy ${person}</button>
+    </div>
+    <textarea class="person-copy-text" id="personCopy${person}" readonly spellcheck="false">${escapeHtml(text)}</textarea>
+    <div class="person-copy-foot"><span>Includes date, category, description, total, payer, split, ${person} share, ${person} paid, and net.</span></div>
+  </div>`;
+}
 function netText(value){
   const rounded = Math.round(value);
   if(Math.abs(rounded) < 500) return `<span class="mono">—</span>`;
@@ -1522,6 +1584,10 @@ function renderPersonExpenses(){
     <div class="person-grid">
       ${categoryMini("TJ detail", "TJ", rawRows)}
       ${categoryMini("EK detail", "EK", rawRows)}
+    </div>
+    <div class="person-copy-grid">
+      ${personCopyCard("TJ", rawRows, t)}
+      ${personCopyCard("EK", rawRows, t)}
     </div>
     <div class="panel">
       <div class="sec-head"><h2 class="serif">${icon("users")} Expense dissection</h2>
@@ -1928,6 +1994,20 @@ function cloudSetupQuick(){
   ensureCloudConfig();
   setSyncPill("Cloud setup saved", false);
   toast("Cloud setup saved");
+}
+async function copyPersonColumn(person){
+  const el = $(`personCopy${person}`);
+  const text = el?.value || "";
+  if(!text) return toast(`No ${person || ""} detail to copy`);
+  try{
+    await navigator.clipboard.writeText(text);
+  }catch(_){
+    el.focus();
+    el.select();
+    document.execCommand("copy");
+    window.getSelection?.().removeAllRanges?.();
+  }
+  toast(`${person} expense detail copied`);
 }
 function cycleTask(id){
   const t = db.checklist.find(x=>x.id===id); if(!t) return;
